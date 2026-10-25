@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite it using the metadata from this file.
+  The repository holds several distributions with versions of their own, so
+  the metadata has no version: cite the distributions and versions that you
+  use, too. Authors are listed by the number of lines they committed, then by
+  the number of their commits; equal contributors, if any, are listed
+  alphabetically by family name and marked with an asterisk (*) after their
+  family names. See "Citation metadata" in the contributing guide of the
+  documentation for who is an author and how to add or correct your entry.
+title: FOCA plugins
+abstract: >-
+  Plugins for gateway services built with FOCA, such as proTES (GA4GH TES)
+  and proWES (GA4GH WES): installable request processing that changes tasks,
+  rejects them by policy, chooses and orders the backends, and adapts each
+  forwarded request. One Python distribution per plugin, grouped by the
+  gateway API and by function, and a meta distribution with extras per group
+  and subgroup.
+type: software
+authors:
+  - given-names: Alexander
+    family-names: Kanitz
+    orcid: "https://orcid.org/0000-0002-3468-0652"
+    affiliation: >-
+      Biozentrum, University of Basel, Basel, Switzerland; SIB Swiss Institute
+      of Bioinformatics, Lausanne, Switzerland
+repository-code: "https://github.com/elixir-cloud-aai/foca-plugins"
+url: "https://foca-plugins.readthedocs.io/"
+keywords:
+  - GA4GH
+  - TES
+  - WES
+  - gateway
+  - plugins
+  - FOCA
+license: Apache-2.0

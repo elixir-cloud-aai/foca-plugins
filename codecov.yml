@@ -1,0 +1,24 @@
+# Codecov settings (https://docs.codecov.com/docs/codecov-yaml): the whole
+# code and the changes of each pull request must be covered completely, as
+# `fail_under` in `pyproject.toml` requires (as in FOCA and cloud-registry).
+# CI uploads one report per plugin, with the distribution name as its flag
+# (`.github/workflows/ci.yml`); pull requests test the affected plugins
+# only, so the reports of the others are carried forward from earlier
+# commits
+coverage:
+  status:
+    project:
+      default:
+        target: 100%
+    patch:
+      default:
+        target: 100%
+
+flag_management:
+  default_rules:
+    carryforward: true
+    statuses:
+      - type: project
+        target: 100%
+      - type: patch
+        target: 100%

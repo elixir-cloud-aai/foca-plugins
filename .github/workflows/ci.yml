@@ -1,0 +1,276 @@
+# Everything that must pass on pull requests and pushes to `dev`: change
+# detection, lint (incl. building and checking all distributions), the tests
+# of each affected plugin (ruff, mypy, pytest at 100% coverage, ast-grep,
+# pip-audit) over the supported Python and FOCA versions, the tests of the
+# repository's scripts, and the docs. The gate `passed` ("CI passed") is the
+# only required check. No `paths:` filters, so that the gate always reports;
+# jobs are skipped with `if:` instead (and the gate allows that skip)
+
+name: CI
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+env:
+  # uv, installed by `astral-sh/setup-uv` (Dependabot bumps the action, not
+  # this version; update it by hand, with `uv.lock` re-locked by the same
+  # version, as in `release.yml`)
+  UV_VERSION: "0.12.13"
+
+# Cancel superseded runs of a pull request; runs for pushes get their own
+# group, so that queued runs for successive pushes are not dropped
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Maps the changed files to the plugins that they affect
+  # (`python -m scripts.packages changed`, see there for the rules): a
+  # plugin's directory affects that plugin; the meta distribution and shared
+  # files (root `pyproject.toml`, `uv.lock`, workflows, scripts, rules) affect
+  # all; docs affect none. Pushes without a known base commit test all
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      packages: ${{ steps.detect.outputs.packages }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The history up to the base commit
+          fetch-depth: 0
+      # The script uses the standard library only
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Detect affected plugins
+        id: detect
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: |
+          packages="$(python -m scripts.packages changed "${BASE}" "${HEAD}")"
+          echo "Affected plugins: ${packages}"
+          echo "packages=${packages}" >> "$GITHUB_OUTPUT"
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The default Python version: the newest in its security phase
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      # All packages, with the dev dependencies; mypy checks imports, so
+      # runtime dependencies are needed too. `--locked` fails if `uv.lock`
+      # is not up to date (it is never updated in CI)
+      # The uv version's checksum is verified by the action
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install dependencies
+        run: |
+          uv sync --locked --all-packages --python "$(which python)"
+          echo "${PWD}/.venv/bin" >> "$GITHUB_PATH"
+      - name: Cache pre-commit hook environments
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      # Includes mypy of all packages and the package conventions
+      # (`python -m scripts.checks check`)
+      - name: Run linters, type checks and security checks
+        run: |
+          pre-commit run --all-files --show-diff-on-failure
+          pre-commit run --all-files --hook-stage manual gitleaks-all
+      # In its own environment, as cffconvert pins an old jsonschema. 2.0.0
+      # is the latest stable release (not bumped by Dependabot; update
+      # manually)
+      - name: Validate citation metadata
+        run: pipx run --spec cffconvert==2.0.0 cffconvert --validate -i CITATION.cff
+      - name: Build distributions
+        run: uv build --all-packages
+      # Each wheel has its package's version and license, and only its own
+      # module (none of the shared namespace packages)
+      - name: Check distributions
+        run: python -m scripts.checks dist dist
+  # One entry per affected plugin, Python version and FOCA version. Python:
+  # the lowest and highest versions that FOCA declares and tests (3.11 and
+  # 3.15, its `requires-python` and classifiers), and the default (3.13, the
+  # newest in its security phase), which reports coverage; all gate, as in
+  # FOCA. FOCA: meant to be the lowest and highest supported versions, but
+  # currently FOCA `dev` only (TODO(FOCA 0.18.0): add `0.18.0` as
+  # `foca-spec: foca==0.18.0`, and keep `dev`)
+  test:
+    name: Test (${{ matrix.package.name }}, Python ${{ matrix.python-version }}, FOCA ${{ matrix.foca }})
+    needs: changes
+    if: ${{ needs.changes.outputs.packages != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.changes.outputs.packages) }}
+        python-version: ["3.11", "3.13", "3.15"]
+        foca: [dev]
+        include:
+          - foca: dev
+            foca-spec: "foca @ git+https://github.com/elixir-cloud-aai/foca@dev"
+    env:
+      PACKAGE: ${{ matrix.package.path }}
+      NAME: ${{ matrix.package.name }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      # Only this plugin and its dependencies (from `uv.lock`), so that it
+      # can't rely on those of other plugins, then the FOCA version of the
+      # entry (for `dev`, its current head rather than the locked commit)
+      # The uv version's checksum is verified by the action
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install dependencies
+        env:
+          FOCA_SPEC: ${{ matrix.foca-spec }}
+        run: |
+          uv sync --locked --package "${NAME}" --group dev --python "$(which python)"
+          uv pip install --reinstall-package foca "${FOCA_SPEC}"
+          echo "${PWD}/.venv/bin" >> "$GITHUB_PATH"
+      - name: Lint
+        run: |
+          ruff check "${PACKAGE}"
+          ruff format --check "${PACKAGE}"
+          ast-grep scan "${PACKAGE}"
+      - name: Check types
+        run: python -m scripts.packages mypy "${PACKAGE}"
+      # TODO(FOCA plugin test kit): add FOCA's contract tests
+      # (`-p foca.plugins.testing.contract`) once FOCA ships them
+      - name: Run tests
+        run: |
+          coverage run --source "${PACKAGE}/src" -m pytest "${PACKAGE}"
+          coverage report
+          coverage xml
+      # One Codecov flag per plugin (carried forward for plugins that a pull
+      # request doesn't test, `codecov.yml`). Upload errors fail the workflow
+      # only on pushes, because pull requests from forks and Dependabot get no
+      # access to the Codecov token
+      - name: Submit report to Codecov
+        if: ${{ matrix.python-version == '3.13' }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          flags: ${{ matrix.package.name }}
+          fail_ci_if_error: ${{ github.event_name == 'push' }}
+          verbose: true
+      # Known vulnerabilities of the plugin's runtime dependencies, as locked
+      # (URL requirements, e.g., FOCA from Git, can't be audited and are
+      # listed as skipped)
+      - name: Audit dependencies
+        run: |
+          uv export --frozen --package "${NAME}" --no-emit-workspace --no-default-groups \
+            --no-hashes --format requirements-txt -o "${RUNNER_TEMP}/requirements.txt"
+          pip-audit --requirement "${RUNNER_TEMP}/requirements.txt" --no-deps \
+            --disable-pip --progress-spinner off
+  # The tests of the repository's own scripts (`scripts/`) and docs hooks
+  # (`docs/hooks.py`), at 100% coverage
+  scripts:
+    name: Test scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      # The uv version's checksum is verified by the action
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install dependencies
+        run: |
+          uv sync --locked --all-packages --python "$(which python)"
+          echo "${PWD}/.venv/bin" >> "$GITHUB_PATH"
+      - name: Run tests
+        run: |
+          coverage run --source scripts,docs -m pytest tests
+          coverage report
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Python version of Read the Docs (`.readthedocs.yaml`)
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      # The uv version's checksum is verified by the action
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install dependencies
+        run: |
+          uv sync --locked --only-group docs --python "$(which python)"
+      # Fails on warnings, e.g., of broken links, anchors and references
+      - name: Build documentation
+        run: uv run --no-sync mkdocs build --strict
+  # The only required check: passes if every other job passed, or was skipped
+  # where that is intended: `test` if no plugin is affected (the matrix would
+  # be empty). Any other result (failure, cancelled, or an unintended skip)
+  # fails it. Add every new job to `needs`
+  passed:
+    name: CI passed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+    needs: [changes, lint, test, scripts, docs]
+    steps:
+      - name: Check results of all jobs
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failed="$(jq -r '
+            (.changes.outputs.packages == "[]") as $none
+            | to_entries[]
+            | select(
+                .value.result == "success"
+                or (.value.result == "skipped" and .key == "test" and $none)
+                | not)
+            | "\(.key): \(.value.result)"' <<< "${NEEDS}")"
+          if [[ -n "${failed}" ]]; then
+            echo "::error::Jobs did not pass: ${failed//$'\n'/, }"
+            exit 1
+          fi

@@ -1,0 +1,19 @@
+id: no-framework-imports
+valid:
+  - import json
+  - from foca.plugins import Context, Plugin
+  - from foca.plugins.model import InboundRequest
+  - import flaskless
+  - from starlettes import x
+invalid:
+  - import flask
+  - import flask.json
+  - import werkzeug.exceptions as wz
+  - import json, connexion
+  - from flask import request
+  - from connexion.exceptions import BadRequestProblem
+  - from starlette.requests import Request
+  - from werkzeug import exceptions
+  - from foca.plugins.adapter import current_principal
+  - from foca.plugins import adapter
+  - import foca.plugins.adapter

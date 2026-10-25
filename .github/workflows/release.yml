@@ -1,0 +1,319 @@
+# !!! DRAFT: UNTESTED. Do not push a release tag until this workflow has been
+# !!! dry-run end to end in a fork, on a test tag, against TestPyPI (see
+# !!! `docs/releasing.md` and `MAINTAINERS.md`). Tags, published PyPI files
+# !!! and GitHub releases can't be fixed afterwards.
+#
+# Releases one package when its tag (`<distribution>-v<version>`, e.g.,
+# `foca-plugin-tes-routing-distance-v1.2.0` or `foca-plugins-v2026.11.0`)
+# is pushed. Fails safe: before anything is built, the tag is checked
+# against the package (`python -m scripts.release release`: a package of
+# this repository, its version on the tagged commit, not the example plugin)
+# and the commit against `main`. Then it builds the distributions with
+# pinned tools, attests their build provenance (GitHub artifact
+# attestations), publishes them to PyPI with trusted publishing (no API
+# token; each PyPI project trusts this workflow file in the `pypi`
+# environment) and PEP 740 attestations, and creates the GitHub release with
+# the notes of the package's `CHANGELOG.md` and its commits since its
+# previous tag. No manual steps: "Re-run failed jobs" completes a partially
+# failed release with the distributions of the first attempt. Never use
+# "Re-run all jobs": it builds again, and sdists aren't reproducible (the
+# build backend stores file times), so PyPI and the GitHub release would get
+# different files. Every job works on the pushed commit (`github.sha`), not
+# on the tag, and fails if the tag no longer points to it before publishing
+
+name: Release
+
+on:
+  push:
+    # Plugins (`foca-plugin-…-v…`) and the meta distribution (`foca-plugins-v…`)
+    tags: ["foca-plugin*-v*"]
+
+permissions:
+  contents: read
+
+env:
+  # As in `ci.yml` (update both together)
+  UV_VERSION: "0.12.13"
+
+# One run per tag, so that tags pushed together (at most 3 per `git push`:
+# GitHub creates no events for more) are all released; re-runs of a tag wait
+# for its running attempt
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      path: ${{ steps.package.outputs.path }}
+      name: ${{ steps.package.outputs.name }}
+      version: ${{ steps.package.outputs.version }}
+      prerelease: ${{ steps.package.outputs.prerelease }}
+    steps:
+      # The pushed commit (`github.sha`), not the tag, which may have moved
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          # Full history, to check that the release commit is on `main`
+          fetch-depth: 0
+      # The scripts use the standard library only
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      # First, before anything is installed or built: the tag must name a
+      # package that may be published, at its version on this commit
+      - name: Check release tag
+        id: package
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          package="$(python -m scripts.release release "${TAG}")"
+          for key in path name version; do
+              echo "${key}=$(jq -r ".${key}" <<< "${package}")" >> "${GITHUB_OUTPUT}"
+          done
+          version="$(jq -r .version <<< "${package}")"
+          # GitHub pre-releases: alphas, betas, release candidates and dev
+          # releases (also with a post release, e.g., `1.0rc1.post1`; in
+          # normalized versions, these letters mark nothing else), and plugins
+          # before 1.0.0 (not the calendar-versioned meta distribution)
+          if [[ "${version}" =~ (a|b|rc|\.dev)[0-9] || "${version}" == 0.* ]]; then
+              echo "prerelease=true" >> "${GITHUB_OUTPUT}"
+          else
+              echo "prerelease=false" >> "${GITHUB_OUTPUT}"
+          fi
+      # Guards against accidental releases from unmerged commits. The `pypi`
+      # environment's protection rules are what actually control publishing
+      - name: Check release commit
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+              echo "::error::Release commit is not on 'main'"
+              exit 1
+          fi
+          python -m scripts.checks check
+          # The notes must exist before anything is published
+          python -m scripts.release notes "${TAG}" > /dev/null
+      # The uv version's checksum is verified by the action
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      # The build backend is pinned (`build-constraint-dependencies` in the
+      # root `pyproject.toml`). The published distributions name FOCA by
+      # version only: the Git source (`tool.uv.sources`) is for development.
+      # The commit's time as the build time makes the wheels reproducible
+      - name: Build distributions
+        env:
+          NAME: ${{ steps.package.outputs.name }}
+        run: |
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
+          export SOURCE_DATE_EPOCH
+          uv build --package "${NAME}" --out-dir dist
+      # twine from `uv.lock` (dependency group `release`), with hashes
+      - name: Check distributions
+        env:
+          NAME: ${{ steps.package.outputs.name }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          python -m scripts.checks dist dist
+          stem="$(python -c 'import re, sys; print(re.sub(r"[-_.]+", "_", sys.argv[1]).lower())' "${NAME}")"
+          ls "dist/${stem}-${VERSION}.tar.gz" "dist/${stem}-${VERSION}-py3-none-any.whl"
+          if [[ "$(find dist -type f | wc -l)" -ne 2 ]]; then
+              echo "::error::Unexpected files in dist/"
+              exit 1
+          fi
+          uv run --frozen --only-group release twine check --strict dist/*
+      - name: Upload distributions
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # SLSA build provenance of the distributions (GitHub artifact
+  # attestations), verifiable with `gh attestation verify`
+  attest:
+    name: Attest distributions
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # Sigstore signing certificates
+      attestations: write # GitHub artifact attestations
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+          # No artifact metadata storage record (needs another permission)
+          create-storage-record: false
+
+  # As in FOCA. The pending trusted publisher of each PyPI project names this
+  # workflow file (`release.yml`) and the environment `pypi`; renaming
+  # either breaks publishing until the maintainer updates PyPI
+  pypi:
+    name: Publish to PyPI
+    needs: [build, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: pypi
+      url: https://pypi.org/project/${{ needs.build.outputs.name }}/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      # The tag must still name the commit that was built (a tag ruleset
+      # should forbid moving it; see `MAINTAINERS.md`)
+      - name: Check tag
+        env:
+          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.server_url }}/${{ github.repository }}.git
+        run: |
+          refs="$(git ls-remote --tags "${REPOSITORY}" "refs/tags/${TAG}" "refs/tags/${TAG}^{}")"
+          # Annotated tags: the commit is the peeled ref (`^{}`)
+          commit="$(awk -v ref="refs/tags/${TAG}^{}" '$2 == ref { print $1 }' <<< "${refs}")"
+          if [[ -z "${commit}" ]]; then
+              commit="$(awk -v ref="refs/tags/${TAG}" '$2 == ref { print $1 }' <<< "${refs}")"
+          fi
+          if [[ "${commit}" != "${GITHUB_SHA}" ]]; then
+              echo "::error::${TAG} points to '${commit}', not to the built commit ${GITHUB_SHA}"
+              exit 1
+          fi
+      # PEP 740 attestations (Sigstore) for every file, made by the action
+      # with the workflow's OIDC identity
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          attestations: true
+          # PyPI files are immutable; skip those already uploaded, so that
+          # re-running a partially failed upload completes the release
+          skip-existing: true
+
+  publish:
+    name: Publish release
+    needs: [build, pypi]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          # The package's earlier tags and history, for the list of commits
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Download distributions
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      # The notes: the version's section of the package's changelog (intro
+      # and grouped sections), then `## Commits`. After an earlier tag of
+      # the package (tags that match `^<distribution>-v[0-9]`, so not those
+      # of other packages), these are GitHub's generated notes since that
+      # tag, without their `## What's Changed` header and ending with their
+      # `**Full Changelog**` line (the format of all release notes of the
+      # organization). On the package's first release, GitHub's notes would
+      # list the whole repository, so they are the commits that changed the
+      # package's directory, with a link to its history. Assets of a
+      # published immutable release can't be changed, so the release is
+      # created as a draft, gets the distributions, and is published last.
+      # Re-runs finish a draft of an earlier attempt and leave a published
+      # release as it is if it has exactly the built distributions. The
+      # previous tag is the newest tag of the package among the ancestors of
+      # the built commit, pre-releases included (`python -m scripts.release
+      # previous`)
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          NAME: ${{ needs.build.outputs.name }}
+          PACKAGE: ${{ needs.build.outputs.path }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          # The tag must still name the built commit (cf. job `pypi`)
+          commit="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | cut -f 1)"
+          if [[ -z "${commit}" ]]; then
+              commit="$(git ls-remote --tags origin "refs/tags/${TAG}" | cut -f 1)"
+          fi
+          if [[ "${commit}" != "${GITHUB_SHA}" ]]; then
+              echo "::error::${TAG} points to '${commit}', not to the built commit ${GITHUB_SHA}"
+              exit 1
+          fi
+          # Only a missing release means "none"; other errors fail the step
+          if state="$(gh release view "${TAG}" --json isDraft --jq \
+              'if .isDraft then "draft" else "published" end' 2> "${RUNNER_TEMP}/view.err")"; then
+              :
+          elif grep -qx "release not found" "${RUNNER_TEMP}/view.err"; then
+              state=none
+          else
+              cat "${RUNNER_TEMP}/view.err" >&2
+              exit 1
+          fi
+          # A published release must have exactly these distributions (those
+          # of the built commit), or it is of other code
+          if [[ "${state}" == "published" ]]; then
+              gh api "repos/${GH_REPO}/releases/tags/${TAG}" \
+                  --jq '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' \
+                  | sort > "${RUNNER_TEMP}/published.sha256"
+              (cd dist && sha256sum -- *) | sort > "${RUNNER_TEMP}/built.sha256"
+              if ! diff "${RUNNER_TEMP}/published.sha256" "${RUNNER_TEMP}/built.sha256"; then
+                  echo "::error::The published release ${TAG} has other files than the built commit ${GITHUB_SHA}"
+                  exit 1
+              fi
+              echo "::notice::${TAG} is already published"
+              exit 0
+          fi
+          if [[ "${state}" == "none" ]]; then
+              notes="${RUNNER_TEMP}/notes.md"
+              python -m scripts.release notes "${TAG}" > "${notes}"
+              previous="$(python -m scripts.release previous "${TAG}" "${GITHUB_SHA}")"
+              printf '\n## Commits\n\n' >> "${notes}"
+              if [[ -n "${previous}" ]]; then
+                  gh api "repos/${GH_REPO}/releases/generate-notes" \
+                      -f "tag_name=${TAG}" -f "previous_tag_name=${previous}" \
+                      --jq .body | sed '/^## What.s Changed$/d' >> "${notes}"
+              else
+                  {
+                      git log --format='* %s (%h)' "${GITHUB_SHA}" -- "${PACKAGE}"
+                      printf '\n**Full Changelog**: https://github.com/%s/commits/%s/%s\n' \
+                          "${GH_REPO}" "${GITHUB_SHA}" "${PACKAGE}"
+                  } >> "${notes}"
+              fi
+              gh release create "${TAG}" \
+                  --draft \
+                  --verify-tag \
+                  --title "${NAME} ${TAG##*-v}" \
+                  --notes-file "${notes}" \
+                  --latest=false \
+                  --prerelease="${PRERELEASE}"
+          fi
+          # Uploads to drafts may replace the assets of an earlier attempt
+          gh release upload "${TAG}" dist/* --clobber
+          gh release edit "${TAG}" --prerelease="${PRERELEASE}" --draft=false

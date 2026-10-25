@@ -1,0 +1,74 @@
+# >>> template only (`scripts/new_plugin.py` removes these lines)
+# Template of a plugin distribution: `python scripts/new_plugin.py <group>
+# <subgroup> <name>` copies it (see "Writing a plugin" in the docs)
+# <<< template only
+# The configuration of the tools (ruff, mypy, pytest, coverage) is shared,
+# in the `pyproject.toml` of the repository root
+
+[build-system]
+# setuptools 83 fixes CVE-2026-59890 (exclusions of `MANIFEST.in` bypassed in
+# sdists), as in FOCA
+requires = ["setuptools>=83"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# `foca-plugin-<group>-<subgroup>-<name>`
+name = "foca-plugin-generic-example-noop"
+# SemVer, bumped in the release pull request (tag
+# `foca-plugin-generic-example-noop-v<version>`; see "Releasing" in the docs)
+version = "0.1.0"
+description = "Example FOCA gateway plugin that changes nothing"
+readme = "README.md"
+# FOCA's `requires-python` (plugins run in the environments of FOCA apps)
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "ELIXIR On-Cloud", email = "cloud-service@elixir-europe.org" },
+]
+keywords = ["foca", "foca-plugin", "gateway", "ga4gh"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Typing :: Typed",
+    # >>> template only (`scripts/new_plugin.py` removes these lines)
+    # The example is never published: PyPI refuses uploads with this
+    # classifier, and so does the release workflow
+    "Private :: Do Not Upload",
+    # <<< template only
+]
+dependencies = [
+    # TODO(FOCA 0.18.0): `>=0.18.0` once released; FOCA's `dev` branch
+    # reports 0.17.1.devN (cf. `tool.uv.sources` of the root `pyproject.toml`)
+    "foca>=0.17.1.dev0,<0.19",
+    "pydantic>=2.7,<3",
+]
+
+[project.urls]
+Homepage = "https://github.com/elixir-cloud-aai/foca-plugins/tree/dev/plugins/generic/example/noop"
+Documentation = "https://foca-plugins.readthedocs.io/"
+Changelog = "https://github.com/elixir-cloud-aai/foca-plugins/blob/dev/plugins/generic/example/noop/CHANGELOG.md"
+Issues = "https://github.com/elixir-cloud-aai/foca-plugins/issues"
+
+# The plugin ID (`<group>.<subgroup>.<name>`) and its class
+[project.entry-points."foca.plugins"]
+"generic.example.noop" = "foca_plugins.generic.example.noop:Noop"
+
+# `foca_plugins`, `foca_plugins.generic` and `foca_plugins.generic.example`
+# are namespace packages shared with the other plugins (PEP 420): the wheel
+# contains this plugin's package only
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["foca_plugins.generic.example.noop"]
+namespaces = true
+
+[tool.setuptools.package-data]
+"foca_plugins.generic.example.noop" = ["py.typed"]

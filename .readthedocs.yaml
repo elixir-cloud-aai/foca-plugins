@@ -1,0 +1,22 @@
+# Read the Docs configuration file
+# See https://docs.readthedocs.io/en/stable/config-file/v2.html for details
+
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    # The default Python version (as in CI's `docs` job)
+    python: "3.13"
+  jobs:
+    # The `docs` dependency group of the root `pyproject.toml` (a uv
+    # workspace root, which is no installable package); pip installs
+    # dependency groups since 25.1
+    install:
+      - python -m pip install --upgrade "pip>=25.1"
+      - python -m pip install --group docs
+
+mkdocs:
+  configuration: mkdocs.yml
+  # Fail on all warnings to avoid broken links and references
+  fail_on_warning: true

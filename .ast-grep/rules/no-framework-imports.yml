@@ -1,0 +1,33 @@
+id: no-framework-imports
+language: python
+severity: error
+message: Plugins must not import a web framework
+note: |
+  Plugins get plain data and an explicit context (`foca.plugins`), so that
+  they run unchanged on every web framework that FOCA supports (Connexion 2
+  and Flask now, Starlette from FOCA 1.0). Don't import Flask, Werkzeug,
+  Connexion or Starlette, nor FOCA's framework glue `foca.plugins.adapter`;
+  use what the hooks get (`InboundRequest`, `Context`, ...) instead.
+files:
+  - plugins/*/*/*/src/**/*.py
+rule:
+  any:
+    # `import x`, `import x.y as z`, `import a, x`
+    - kind: import_statement
+      has:
+        kind: dotted_name
+        regex: ^(flask|werkzeug|connexion|starlette|foca\.plugins\.adapter)(\.|$)
+        stopBy: end
+    - kind: import_from_statement
+      has:
+        field: module_name
+        regex: ^(flask|werkzeug|connexion|starlette|foca\.plugins\.adapter)(\.|$)
+    - kind: import_from_statement
+      all:
+        - has:
+            field: module_name
+            regex: ^foca\.plugins$
+        - has:
+            field: name
+            regex: ^adapter$
+            stopBy: end
