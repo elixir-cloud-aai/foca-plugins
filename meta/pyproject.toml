@@ -1,0 +1,59 @@
+# The meta distribution `foca-plugins`: no code, only extras that select
+# plugins of this repository by group and subgroup, each pinning exact
+# versions. A release of it is a release train: plugins tested together
+# against the supported FOCA versions (see "Installing" and "Releasing" in
+# the docs)
+
+[build-system]
+requires = ["setuptools>=83"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "foca-plugins"
+# Calendar version of the release train, `YYYY.MM.N` (N counts the releases
+# of the month, from 0); set in the release pull request
+version = "2026.10.0.dev0"
+description = "Selections of the FOCA gateway plugins of ELIXIR On-Cloud"
+readme = "README.md"
+# FOCA's `requires-python`, as in the plugins
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "ELIXIR On-Cloud", email = "cloud-service@elixir-europe.org" },
+]
+keywords = ["foca", "foca-plugin", "gateway", "ga4gh", "protes", "prowes"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: System Administrators",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3",
+]
+# The FOCA versions that the train was tested with; set in the release pull
+# request. TODO(FOCA 0.18.0): `>=0.18.0,<0.19`
+dependencies = ["foca>=0.17.1.dev0,<0.19"]
+
+# Extras per group (`<group>`) and subgroup (`<group>-<subgroup>`), plus
+# `all` (stable plugins only) and `experimental` (experimental ones). Each
+# entry pins an exact version, e.g., `"foca-plugin-tes-routing-distance==1.2.0"`,
+# and is listed in its subgroup, its group, and in `all` or `experimental`
+# (`python -m scripts.checks check` checks this). A subgroup's extra is
+# added with its first plugin. They are empty until the first plugins are
+# released; the example plugin `generic.example.noop` is never published,
+# so it is in no extra
+[project.optional-dependencies]
+generic = []
+tes = []
+wes = []
+all = []
+experimental = []
+
+[project.urls]
+Homepage = "https://github.com/elixir-cloud-aai/foca-plugins"
+Documentation = "https://foca-plugins.readthedocs.io/"
+Changelog = "https://github.com/elixir-cloud-aai/foca-plugins/blob/dev/meta/CHANGELOG.md"
+Issues = "https://github.com/elixir-cloud-aai/foca-plugins/issues"
+
+# No packages: the distribution contains its metadata only
+[tool.setuptools]
+packages = []
