@@ -97,16 +97,115 @@ def test_check_unique_names(repo: Path) -> None:
     assert checks.check(repo) == ["distribution 'foca-plugin-tes-a-b-c' is not unique"]
 
 
+def release(target: Path) -> None:
+    """Mark the version of a new plugin (0.1.0) as released in its changelog.
+
+    Args:
+        target: Directory of the plugin.
+    """
+    replace(target / "CHANGELOG.md", "## Unreleased", "## 0.1.0")
+
+
 def test_check_meta_pins(repo: Path) -> None:
     """Correct pins of the meta distribution pass.
 
     Args:
         repo: Repository root.
     """
-    new_plugin.create("tes", "routing", "distance", repo)
+    target = new_plugin.create("tes", "routing", "distance", repo)
+    release(target)
     pin = '["foca-plugin-tes-routing-distance==0.1.0"]'
     set_extras(repo, f"tes = {pin}\ntes-routing = {pin}\nexperimental = {pin}")
     assert checks.check(repo) == []
+    module = target / "src" / "foca_plugins" / "tes" / "routing" / "distance"
+    replace(module / "__init__.py", 'maturity = "experimental"', 'maturity = "stable"')
+    set_extras(repo, f"tes = {pin}\ntes-routing = {pin}\nall = {pin}")
+    assert checks.check(repo) == []
+
+
+def test_check_meta_requires_released(repo: Path) -> None:
+    """Released plugins must be listed by their maturity; unreleased ones not.
+
+    Args:
+        repo: Repository root.
+    """
+    target = new_plugin.create("tes", "routing", "distance", repo)
+    assert checks.check(repo) == []
+    release(target)
+    name = "foca-plugin-tes-routing-distance"
+    assert checks.check(repo) == [
+        f"meta: {name} is missing in [tes]",
+        f"meta: {name} is missing in [tes-routing]",
+        f"meta: {name} is experimental: it must be in [experimental], and not in"
+        " the other of [all], [experimental]",
+    ]
+    pin = f'["{name}==0.1.0"]'
+    set_extras(repo, f"tes = {pin}\ntes-routing = {pin}\nall = {pin}")
+    assert checks.check(repo) == [
+        f"meta: {name} is experimental: it must be in [experimental], and not in"
+        " the other of [all], [experimental]",
+    ]
+    module = target / "src" / "foca_plugins" / "tes" / "routing" / "distance"
+    replace(module / "__init__.py", 'maturity = "experimental"', 'maturity = "beta"')
+    assert checks.check(repo) == [f"meta: {name} has an unknown maturity 'beta'"]
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ('    maturity = "stable"\n', "stable"),
+        ('    maturity: str = "deprecated"\n', "deprecated"),
+        ("    maturity = STABLE\n    label = 'x'\n", "experimental"),
+        ("    pass\n", "experimental"),
+    ],
+)
+def test_maturity(repo: Path, code: str, expected: str) -> None:
+    """The maturity is a string constant of the class, or FOCA's default.
+
+    Args:
+        repo: Repository root.
+        code: Body of the plugin's class.
+        expected: Maturity.
+    """
+    path = repo / NOOP.path / "src" / "foca_plugins" / "generic" / "example"
+    (path / "noop" / "__init__.py").write_text(
+        f"x = 1\n\n\nclass Other:\n    maturity = 'stable'\n\n\nclass Noop:\n{code}"
+    )
+    assert checks.maturity(NOOP, repo) == expected
+
+
+@pytest.mark.parametrize("version", ["1.0", "1.0.0rc1", "2026.10.0.dev0", "1.0.post1"])
+def test_check_versions(repo: Path, version: str) -> None:
+    """Normalized PEP 440 versions pass.
+
+    Args:
+        repo: Repository root.
+        version: Version.
+    """
+    replace(
+        repo / NOOP.path / "pyproject.toml",
+        'version = "0.1.0"',
+        f'version = "{version}"',
+    )
+    assert checks.check(repo) == []
+
+
+@pytest.mark.parametrize(
+    "version", ["1.0.0-rc1", "1.0.0RC1", "01.0", "1!1.0", "1.0+local", "v1.0", "1.0c1"]
+)
+def test_check_versions_refused(repo: Path, version: str) -> None:
+    """Versions that aren't normalized PEP 440 ones are reported.
+
+    Args:
+        repo: Repository root.
+        version: Version.
+    """
+    path = repo / "meta" / "pyproject.toml"
+    replace(path, 'version = "2026.10.0.dev0"', f'version = "{version}"')
+    assert checks.check(repo) == [
+        f"meta: version {version!r} is no normalized PEP 440 version (e.g.,"
+        " `1.2.0`, `1.2.0rc1`, `1.2.0.dev0`; no epoch, no local part)"
+    ]
 
 
 def test_check_meta_problems(repo: Path) -> None:
@@ -126,21 +225,22 @@ def test_check_meta_problems(repo: Path) -> None:
     (repo / "meta" / "LICENSE").unlink()
     replace(repo / "meta" / "pyproject.toml", 'name = "foca-plugins"', 'name = "x"')
     name = "foca-plugin-tes-routing-distance"
+    released = "is not released (no section in its CHANGELOG.md)"
     assert checks.check(repo) == [
         "meta: LICENSE must be a copy of the repository's LICENSE",
         "meta: distribution is 'x', expected 'foca-plugins'",
         f"meta: [tes] pins {name} 0.2.0, but its version is 0.1.0",
+        f"meta: [tes] {name} 0.2.0 {released}",
         "meta: [tes] 'requests>=2' is no exact pin of a plugin"
         " (`<distribution>==<version>`)",
         "meta: [tes] foca-plugin-generic-example-noop is never published",
         f"meta: [all] pins {name} 0.2.0, but its version is 0.1.0",
+        f"meta: [all] {name} 0.2.0 {released}",
         f"meta: [experimental] pins {name} 0.2.0, but its version is 0.1.0",
+        f"meta: [experimental] {name} 0.2.0 {released}",
         f"meta: {name} is missing in [tes-routing]",
-        f"meta: {name} must be in exactly one of [all], [experimental]",
-        "meta: foca-plugin-generic-example-noop is missing in [generic]",
-        "meta: foca-plugin-generic-example-noop is missing in [generic-example]",
-        "meta: foca-plugin-generic-example-noop must be in exactly one of [all],"
-        " [experimental]",
+        f"meta: {name} is experimental: it must be in [experimental], and not in"
+        " the other of [all], [experimental]",
     ]
 
 
@@ -157,6 +257,7 @@ def test_check_dist(repo: Path) -> None:
         f"{noop}-py3-none-any.whl",
         [
             "foca_plugins/generic/example/noop/__init__.py",
+            "foca_plugins/generic/example/noop/py.typed",
             f"{noop}.dist-info/licenses/LICENSE",
         ],
     )
@@ -186,6 +287,7 @@ def test_check_dist_problems(repo: Path) -> None:
         f"{name}: unexpected files: foca_plugins/__init__.py",
         f"{name}: LICENSE is missing",
         f"{name}: foca_plugins/generic/example/noop/__init__.py is missing",
+        f"{name}: foca_plugins/generic/example/noop/py.typed is missing",
         "other-1.0-py3-none-any.whl: no package of this repository",
     ]
 

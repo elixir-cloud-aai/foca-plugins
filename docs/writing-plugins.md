@@ -79,8 +79,10 @@ plugins/<group>/<subgroup>/<name>/
   parameter (`Params`), the phases, what the plugin records (annotations),
   and its data transfers to third parties.
 - **Metadata of the class:** `apis`, `maturity` (`experimental` until it has
-  proven itself, then `stable`), `capabilities` (generic descriptors, not
-  package names) and `data_transfers`.
+  proven itself, then `stable`; a string in the class body, which the checks
+  read to place a released plugin in the meta distribution's `[all]` or
+  `[experimental]`), `capabilities` (generic descriptors, not package names)
+  and `data_transfers`.
 
 ## Rules for plugin code
 

@@ -47,6 +47,16 @@ NAME_PATTERN = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
 # Parts of names that look like the version of a release tag
 # (`<distribution>-v<version>`), which would make tags ambiguous
 VERSION_LIKE = re.compile(r"(^|-)v[0-9]")
+# Normalized PEP 440 versions without epochs and local parts (as `packaging`
+# prints them), so that versions, wheel names and release tags agree
+VERSION_PATTERN = re.compile(
+    r"(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))*((a|b|rc)(0|[1-9][0-9]*))?"
+    r"(\.post(0|[1-9][0-9]*))?(\.dev(0|[1-9][0-9]*))?"
+)
+# Headings of the versions in changelogs (`## <version>`, optionally
+# followed by a date), and of the changes not released yet
+CHANGELOG_HEADING = re.compile(r"^## (?P<version>\S+)", re.MULTILINE)
+UNRELEASED = "Unreleased"
 # Changes of these affect no package: they are checked by the jobs `lint`
 # and `docs` (`LICENSE` copies by `scripts/checks.py`)
 UNSHARED = re.compile(
@@ -172,6 +182,27 @@ def package_version(package: Package, root: Path) -> str:
     """
     project = load_pyproject(root / package.path / "pyproject.toml")["project"]
     return str(project.get("version", ""))
+
+
+def released_versions(package: Package, root: Path) -> list[str]:
+    """Get the released versions of a package from its changelog.
+
+    Args:
+        package: Package.
+        root: Repository root.
+
+    Returns:
+        The versions with sections in its `CHANGELOG.md`, newest (topmost)
+        first, without `Unreleased`; empty without a changelog.
+    """
+    path = root / package.path / "CHANGELOG.md"
+    if not path.is_file():
+        return []
+    return [
+        match["version"]
+        for match in CHANGELOG_HEADING.finditer(path.read_text())
+        if match["version"] != UNRELEASED
+    ]
 
 
 def affected(changed: Iterable[str], packages: Sequence[Package]) -> list[Package]:

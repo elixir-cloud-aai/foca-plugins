@@ -5,19 +5,26 @@ Commands, run from the repository root as `python -m scripts.checks
 
 - `check` (`.pre-commit-config.yaml`, and `.github/workflows/release.yml`):
   the conventions of the packages (unique names without parts like the
-  versions of release tags, entry points, namespace packages, files,
-  licenses, the pins of the meta distribution).
+  versions of release tags, static and normalized PEP 440 versions, entry
+  points, namespace packages, `py.typed`, files, licenses) and of the meta
+  distribution's extras: every plugin that is released (has a version
+  section in its changelog) and may be published is pinned to a released
+  version in its group's and subgroup's extras, and in `[all]` if it is
+  `stable` or `deprecated`, or in `[experimental]` if it is `experimental`
+  (the `maturity` of its class).
 - `dist DIR` (`ci.yml`, job `lint`, and `release.yml`): the wheels in a
   directory (e.g., of `uv build --all-packages`): each of a package of the
-  repository, of its version, with its license and only its own module (no
-  files of the namespace packages).
+  repository, of its version, with its license, its `py.typed` and only its
+  own module (no files of the namespace packages).
 """
 
 import argparse
+import ast
 from collections.abc import Sequence
 from pathlib import Path
 import re
 import sys
+from typing import Any
 import zipfile
 
 from scripts.packages import (
@@ -29,14 +36,75 @@ from scripts.packages import (
     PRIVATE_CLASSIFIER,
     ROOT,
     VERSION_LIKE,
+    VERSION_PATTERN,
     Package,
     discover,
     load_pyproject,
     package_version,
     plugins,
+    released_versions,
 )
 
 PIN_PATTERN = re.compile(r"(?P<name>[a-z0-9-]+)==(?P<version>[^\s;,]+)")
+# FOCA's default maturity of plugins (`foca.plugins.Plugin.maturity`)
+DEFAULT_MATURITY = "experimental"
+# The extra of the meta distribution for each maturity
+MATURITY_EXTRAS = {"experimental": "experimental", "stable": "all", "deprecated": "all"}
+
+
+def _check_version(project: dict[str, Any]) -> list[str]:
+    """Check that a package has a static, normalized version.
+
+    Args:
+        project: Table `project` of its `pyproject.toml`.
+
+    Returns:
+        Problems found.
+    """
+    if "version" not in project:
+        return ["version must be static (`project.version`)"]
+    if VERSION_PATTERN.fullmatch(str(project["version"])) is None:
+        return [
+            f"version {project['version']!r} is no normalized PEP 440 version"
+            " (e.g., `1.2.0`, `1.2.0rc1`, `1.2.0.dev0`; no epoch, no local part)"
+        ]
+    return []
+
+
+def maturity(package: Package, root: Path) -> str:
+    """Get the maturity of a plugin from the code of its class.
+
+    Args:
+        package: Plugin.
+        root: Repository root.
+
+    Returns:
+        The string assigned to `maturity` in the class of its entry point,
+        in the module `<import path>/__init__.py`, or FOCA's default.
+    """
+    project = load_pyproject(root / package.path / "pyproject.toml")["project"]
+    target = str(project["entry-points"][ENTRY_POINT_GROUP][package.plugin_id])
+    class_name = target.partition(":")[2]
+    module = root / package.path / "src" / Path(*package.import_path.split("."))
+    tree = ast.parse((module / "__init__.py").read_text())
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            for statement in node.body:
+                targets = (
+                    statement.targets
+                    if isinstance(statement, ast.Assign)
+                    else [statement.target]
+                    if isinstance(statement, ast.AnnAssign)
+                    else []
+                )
+                value = getattr(statement, "value", None)
+                if (
+                    any(isinstance(t, ast.Name) and t.id == "maturity" for t in targets)
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    return value.value
+    return DEFAULT_MATURITY
 
 
 def _check_plugin(package: Package, root: Path, license_text: str) -> list[str]:
@@ -66,8 +134,7 @@ def _check_plugin(package: Package, root: Path, license_text: str) -> list[str]:
         problems.append(f"distribution is {package.name!r}, expected {expected!r}")
     directory = root / package.path
     project = load_pyproject(directory / "pyproject.toml")["project"]
-    if "version" not in project:
-        problems.append("version must be static (`project.version`)")
+    problems.extend(_check_version(project))
     target = f"{package.import_path}:"
     entries = project.get("entry-points", {}).get(ENTRY_POINT_GROUP, {})
     if list(entries) != [package.plugin_id] or not str(
@@ -79,8 +146,9 @@ def _check_plugin(package: Package, root: Path, license_text: str) -> list[str]:
         )
     src = directory / "src"
     module = src.joinpath(*package.import_path.split("."))
-    if not (module / "__init__.py").is_file():
-        problems.append(f"{module.relative_to(root)}/__init__.py is missing")
+    for marker in ("__init__.py", "py.typed"):
+        if not (module / marker).is_file():
+            problems.append(f"{module.relative_to(root)}/{marker} is missing")
     for level in range(1, 4):
         namespace = src.joinpath(*package.import_path.split(".")[:level])
         if (namespace / "__init__.py").exists():
@@ -129,9 +197,9 @@ def _check_meta(
     problems = _check_license(directory, license_text)
     if package.name != META_NAME:
         problems.append(f"distribution is {package.name!r}, expected {META_NAME!r}")
-    extras: dict[str, list[str]] = load_pyproject(directory / "pyproject.toml")[
-        "project"
-    ].get("optional-dependencies", {})
+    meta = load_pyproject(directory / "pyproject.toml")["project"]
+    problems.extend(_check_version(meta))
+    extras: dict[str, list[str]] = meta.get("optional-dependencies", {})
     projects = {
         p.name: (p, load_pyproject(root / p.path / "pyproject.toml")["project"])
         for p in plugins(packages)
@@ -154,14 +222,32 @@ def _check_meta(
                 )
             if PRIVATE_CLASSIFIER in project.get("classifiers", []):
                 problems.append(f"[{extra}] {plugin.name} is never published")
+            elif match["version"] not in released_versions(plugin, root):
+                problems.append(
+                    f"[{extra}] {plugin.name} {match['version']} is not released"
+                    " (no section in its CHANGELOG.md)"
+                )
             listed.setdefault(plugin.name, set()).add(extra)
-    for name, names in listed.items():
-        group, subgroup, _ = projects[name][0].parts
+    # Every plugin that may be published and is released or listed
+    for name, (plugin, project) in projects.items():
+        names = listed.get(name, set())
+        if PRIVATE_CLASSIFIER in project.get("classifiers", []) or not (
+            names or released_versions(plugin, root)
+        ):
+            continue
+        group, subgroup, _ = plugin.parts
         for extra in (group, f"{group}-{subgroup}"):
             if extra not in names:
                 problems.append(f"{name} is missing in [{extra}]")
-        if len(names & {"all", "experimental"}) != 1:
-            problems.append(f"{name} must be in exactly one of [all], [experimental]")
+        level = maturity(plugin, root)
+        expected = MATURITY_EXTRAS.get(level)
+        if expected is None:
+            problems.append(f"{name} has an unknown maturity {level!r}")
+        elif names & {"all", "experimental"} != {expected}:
+            problems.append(
+                f"{name} is {level}: it must be in [{expected}], and not in the"
+                " other of [all], [experimental]"
+            )
     return problems
 
 
@@ -247,8 +333,10 @@ def check_dist(directory: Path, root: Path = ROOT) -> list[str]:
             problems.append(f"{wheel.name}: unexpected files: {', '.join(unexpected)}")
         if f"{info}licenses/LICENSE" not in files:
             problems.append(f"{wheel.name}: LICENSE is missing")
-        if module is not None and f"{module}__init__.py" not in files:
-            problems.append(f"{wheel.name}: {module}__init__.py is missing")
+        if module is not None:
+            for marker in ("__init__.py", "py.typed"):
+                if f"{module}{marker}" not in files:
+                    problems.append(f"{wheel.name}: {module}{marker} is missing")
     return problems
 
 
