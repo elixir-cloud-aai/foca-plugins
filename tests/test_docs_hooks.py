@@ -37,16 +37,23 @@ def test_catalogue(repo: Path) -> None:
     readme = target / "README.md"
     readme.write_text(readme.read_text().replace("TODO: what", "A | B: what"))
     rows = hooks.catalogue(repo, ref="abc").splitlines()
-    assert rows[0] == "| Plugin ID | Distribution | Published | Summary |"
+    assert rows[0] == "| Plugin ID | Distribution | Latest release | Summary |"
     assert rows[2].startswith(
         f"| [`generic.example.noop`]({URL}/abc/plugins/generic/example/noop)"
-        " | `foca-plugin-generic-example-noop` | no | Example plugin that"
+        " | `foca-plugin-generic-example-noop` | never | Example plugin that"
     )
     assert rows[3] == (
         f"| [`tes.routing.distance`]({URL}/abc/plugins/tes/routing/distance)"
-        " | `foca-plugin-tes-routing-distance` | yes"
+        " | `foca-plugin-tes-routing-distance` | not yet released"
         " | A \\| B: what the plugin does, in a few sentences. |"
     )
+    changelog = target / "CHANGELOG.md"
+    changelog.write_text(
+        changelog.read_text().replace(
+            "## Unreleased", "## Unreleased\n\n## 0.2.0 (2026-11-02)\n\n## 0.1.0"
+        )
+    )
+    assert "| `foca-plugin-tes-routing-distance` | `0.2.0` |" in hooks.catalogue(repo)
 
 
 def test_catalogue_without_plugins(tmp_path: Path) -> None:

@@ -2,8 +2,10 @@
 
 The page with the line `<!-- catalogue -->` (`catalogue.md`) gets a table of
 all plugins of the repository in its place: per plugin, its ID (linked to
-its README on GitHub), its distribution, whether it is published, and its
-summary, i.e., the section `summary` of its README (between
+its README on GitHub), its distribution, its latest release (the topmost
+version section of its `CHANGELOG.md`; "not yet released" without one, and
+"never" for the example, which is never published; no lookups on PyPI), and
+its summary, i.e., the section `summary` of its README (between
 `<!-- --8<-- [start:summary] -->` and `<!-- --8<-- [end:summary] -->`).
 Plugins are found as `scripts/packages.py` finds them, so the catalogue
 lists every plugin directory, and a README without a summary fails the
@@ -80,18 +82,21 @@ def catalogue(root: Path = ROOT, ref: str = "dev") -> str:
     rows = []
     for package in packages.plugins(packages.discover(root)):
         project = packages.load_pyproject(root / package.path / "pyproject.toml")
-        published = packages.PRIVATE_CLASSIFIER not in project["project"].get(
-            "classifiers", []
-        )
+        released = packages.released_versions(package, root)
+        if packages.PRIVATE_CLASSIFIER in project["project"].get("classifiers", []):
+            status = "never"
+        else:
+            status = f"`{released[0]}`" if released else "not yet released"
         text = summary(root / package.path / "README.md").replace("|", "\\|")
         rows.append(
             f"| [`{package.plugin_id}`]({REPO_URL}/tree/{ref}/{package.path}) "
-            f"| `{package.name}` | {'yes' if published else 'no'} | {text} |"
+            f"| `{package.name}` | {status} | {text} |"
         )
     if not rows:
         return "No plugins yet."
     header = (
-        "| Plugin ID | Distribution | Published | Summary |\n| --- | --- | --- | --- |"
+        "| Plugin ID | Distribution | Latest release | Summary |\n"
+        "| --- | --- | --- | --- |"
     )
     return "\n".join([header, *rows])
 
