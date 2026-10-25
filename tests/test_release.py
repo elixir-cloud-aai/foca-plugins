@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from scripts import new_plugin, release
-from tests.helpers import DISTANCE
+from tests.helpers import DISTANCE, git
 
 
 def test_release(repo: Path) -> None:
@@ -30,6 +30,7 @@ def test_release(repo: Path) -> None:
         ("v0.1.0", "is no tag"),
         ("foca-plugin-other-v0.1.0", "is no tag"),
         ("foca-plugins-2026.10.0", "is no tag"),
+        ("foca-plugins-v2026.10.0-dev0", "is no tag"),
         ("foca-plugins-v2026.11.0", "has version '2026.10.0.dev0' on this commit"),
         ("foca-plugin-generic-example-noop-v0.1.0", "is never published"),
     ],
@@ -55,7 +56,10 @@ def test_notes(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """
     changelog = repo / "meta" / "CHANGELOG.md"
     tag = "foca-plugins-v2026.10.0.dev0"
-    with pytest.raises(ValueError, match=r"no section '## 2026\.10\.0\.dev0'"):
+    with pytest.raises(ValueError, match=r"no sections '## 2026\.10\.0\.dev0'"):
+        release.notes(tag, repo)
+    changelog.write_text("## 2026.10.0.dev0\n\nA.\n\n## 2026.10.0.dev0 (2)\n\nB.\n")
+    with pytest.raises(ValueError, match=r"has 2 sections '## 2026\.10\.0\.dev0'"):
         release.notes(tag, repo)
     changelog.write_text("# Changelog\n\n## 2026.10.0.dev0\n\n## 2026.9.0\n\nOld\n")
     with pytest.raises(ValueError, match="is empty"):
@@ -81,3 +85,36 @@ def test_main(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert json.loads(capsys.readouterr().out)["name"] == "foca-plugins"
     assert release.main(["release", "x"], repo) == 1
     assert "::error::'x' is no tag" in capsys.readouterr().err
+    assert release.main(["previous", "foca-plugins-v2026.10.0.dev0", "x"], repo) == 0
+    assert capsys.readouterr().out == "\n"
+
+
+def test_previous(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """The previous tag is the package's newest among the commit's ancestors.
+
+    Args:
+        tmp_path: Repository.
+        capsys: Captured output.
+    """
+    name = "foca-plugin-tes-a"
+    git(tmp_path, "init", "-q")
+
+    def commit(*tags: str) -> str:
+        git(tmp_path, "commit", "-q", "--allow-empty", "--no-gpg-sign", "-m", "c")
+        for tag in tags:
+            git(tmp_path, "tag", "--no-sign", tag)
+        return git(tmp_path, "rev-parse", "HEAD")
+
+    first = commit(f"{name}-v0.1.0")
+    second = commit(f"{name}-b-v1.0.0", f"{name}-v0.2.0rc1")
+    third = commit(f"{name}-v0.2.0")
+    assert release.previous(f"{name}-v0.1.0", first, tmp_path) is None
+    assert release.previous(f"{name}-v0.2.0rc1", second, tmp_path) == f"{name}-v0.1.0"
+    assert release.previous(f"{name}-v0.2.0", third, tmp_path) == f"{name}-v0.2.0rc1"
+    assert release.previous(f"{name}-b-v1.0.1", third, tmp_path) == f"{name}-b-v1.0.0"
+    commit(f"{name}-v1.0-x")
+    fifth = commit()
+    with pytest.raises(ValueError, match="Unexpected previous tag"):
+        release.previous(f"{name}-v1.0.0", fifth, tmp_path)
+    assert release.main(["previous", f"{name}-v1.0.0", fifth], tmp_path) == 1
+    assert "Unexpected previous tag" in capsys.readouterr().err

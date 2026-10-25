@@ -18,7 +18,8 @@
 # failed release with the distributions of the first attempt. Never use
 # "Re-run all jobs": it builds again, and sdists aren't reproducible (the
 # build backend stores file times), so PyPI and the GitHub release would get
-# different files
+# different files. Every job works on the pushed commit (`github.sha`), not
+# on the tag, and fails if the tag no longer points to it before publishing
 
 name: Release
 
@@ -52,9 +53,11 @@ jobs:
       version: ${{ steps.package.outputs.version }}
       prerelease: ${{ steps.package.outputs.prerelease }}
     steps:
+      # The pushed commit (`github.sha`), not the tag, which may have moved
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
           # Full history, to check that the release commit is on `main`
           fetch-depth: 0
@@ -76,9 +79,10 @@ jobs:
           done
           version="$(jq -r .version <<< "${package}")"
           # GitHub pre-releases: alphas, betas, release candidates and dev
-          # releases, and plugins before 1.0.0 (not the calendar-versioned
-          # meta distribution)
-          if [[ "${version}" =~ (a|b|rc|\.dev)[0-9]+$ || "${version}" == 0.* ]]; then
+          # releases (also with a post release, e.g., `1.0rc1.post1`; in
+          # normalized versions, these letters mark nothing else), and plugins
+          # before 1.0.0 (not the calendar-versioned meta distribution)
+          if [[ "${version}" =~ (a|b|rc|\.dev)[0-9] || "${version}" == 0.* ]]; then
               echo "prerelease=true" >> "${GITHUB_OUTPUT}"
           else
               echo "prerelease=false" >> "${GITHUB_OUTPUT}"
@@ -177,6 +181,23 @@ jobs:
         with:
           name: dist
           path: dist/
+      # The tag must still name the commit that was built (a tag ruleset
+      # should forbid moving it; see `MAINTAINERS.md`)
+      - name: Check tag
+        env:
+          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.server_url }}/${{ github.repository }}.git
+        run: |
+          refs="$(git ls-remote --tags "${REPOSITORY}" "refs/tags/${TAG}" "refs/tags/${TAG}^{}")"
+          # Annotated tags: the commit is the peeled ref (`^{}`)
+          commit="$(awk -v ref="refs/tags/${TAG}^{}" '$2 == ref { print $1 }' <<< "${refs}")"
+          if [[ -z "${commit}" ]]; then
+              commit="$(awk -v ref="refs/tags/${TAG}" '$2 == ref { print $1 }' <<< "${refs}")"
+          fi
+          if [[ "${commit}" != "${GITHUB_SHA}" ]]; then
+              echo "::error::${TAG} points to '${commit}', not to the built commit ${GITHUB_SHA}"
+              exit 1
+          fi
       # PEP 740 attestations (Sigstore) for every file, made by the action
       # with the workflow's OIDC identity
       - name: Publish to PyPI
@@ -198,6 +219,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
           # The package's earlier tags and history, for the list of commits
           fetch-depth: 0
@@ -222,8 +244,10 @@ jobs:
       # published immutable release can't be changed, so the release is
       # created as a draft, gets the distributions, and is published last.
       # Re-runs finish a draft of an earlier attempt and leave a published
-      # release as it is. The previous tag is the newest tag of the package
-      # among the ancestors of the tagged commit, pre-releases included
+      # release as it is if it has exactly the built distributions. The
+      # previous tag is the newest tag of the package among the ancestors of
+      # the built commit, pre-releases included (`python -m scripts.release
+      # previous`)
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -233,6 +257,15 @@ jobs:
           PACKAGE: ${{ needs.build.outputs.path }}
           PRERELEASE: ${{ needs.build.outputs.prerelease }}
         run: |
+          # The tag must still name the built commit (cf. job `pypi`)
+          commit="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | cut -f 1)"
+          if [[ -z "${commit}" ]]; then
+              commit="$(git ls-remote --tags origin "refs/tags/${TAG}" | cut -f 1)"
+          fi
+          if [[ "${commit}" != "${GITHUB_SHA}" ]]; then
+              echo "::error::${TAG} points to '${commit}', not to the built commit ${GITHUB_SHA}"
+              exit 1
+          fi
           # Only a missing release means "none"; other errors fail the step
           if state="$(gh release view "${TAG}" --json isDraft --jq \
               'if .isDraft then "draft" else "published" end' 2> "${RUNNER_TEMP}/view.err")"; then
@@ -243,22 +276,24 @@ jobs:
               cat "${RUNNER_TEMP}/view.err" >&2
               exit 1
           fi
+          # A published release must have exactly these distributions (those
+          # of the built commit), or it is of other code
           if [[ "${state}" == "published" ]]; then
+              gh api "repos/${GH_REPO}/releases/tags/${TAG}" \
+                  --jq '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' \
+                  | sort > "${RUNNER_TEMP}/published.sha256"
+              (cd dist && sha256sum -- *) | sort > "${RUNNER_TEMP}/built.sha256"
+              if ! diff "${RUNNER_TEMP}/published.sha256" "${RUNNER_TEMP}/built.sha256"; then
+                  echo "::error::The published release ${TAG} has other files than the built commit ${GITHUB_SHA}"
+                  exit 1
+              fi
               echo "::notice::${TAG} is already published"
               exit 0
           fi
           if [[ "${state}" == "none" ]]; then
               notes="${RUNNER_TEMP}/notes.md"
               python -m scripts.release notes "${TAG}" > "${notes}"
-              previous="$(git describe --tags --abbrev=0 --match "${NAME}-v[0-9]*" \
-                  "${TAG}^" 2> /dev/null || true)"
-              # `--match` takes globs: check the tag exactly (names have no
-              # parts like `-v<digit>`, so other packages' tags don't match)
-              if [[ -n "${previous}" ]] \
-                  && ! grep -qE "^${NAME}-v[0-9][^-]*$" <<< "${previous}"; then
-                  echo "::error::Unexpected previous tag ${previous}"
-                  exit 1
-              fi
+              previous="$(python -m scripts.release previous "${TAG}" "${GITHUB_SHA}")"
               printf '\n## Commits\n\n' >> "${notes}"
               if [[ -n "${previous}" ]]; then
                   gh api "repos/${GH_REPO}/releases/generate-notes" \
@@ -266,9 +301,9 @@ jobs:
                       --jq .body | sed '/^## What.s Changed$/d' >> "${notes}"
               else
                   {
-                      git log --format='* %s (%h)' "${TAG}" -- "${PACKAGE}"
+                      git log --format='* %s (%h)' "${GITHUB_SHA}" -- "${PACKAGE}"
                       printf '\n**Full Changelog**: https://github.com/%s/commits/%s/%s\n' \
-                          "${GH_REPO}" "${TAG}" "${PACKAGE}"
+                          "${GH_REPO}" "${GITHUB_SHA}" "${PACKAGE}"
                   } >> "${notes}"
               fi
               gh release create "${TAG}" \

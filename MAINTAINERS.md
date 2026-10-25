@@ -65,6 +65,12 @@ template of all FOCA repositories, and the setup tasks that are still open.
    (`build-constraint-dependencies` in the root `pyproject.toml`) and
    cffconvert (`ci.yml`); update them by hand from time to time. twine is
    locked in `uv.lock` (dependency group `release`).
+7. **Tag ruleset (maintainer action):** add a tag ruleset that protects
+   `foca-plugin*-v*` (which covers the meta distribution's `foca-plugins-v*`)
+   from updates and deletion, with no bypass for regular contributors, before
+   the first release. The release workflow builds the tagged commit and
+   fails if the tag moves during the run, but only the ruleset stops a moved
+   tag from pointing at other code than its published files.
 
 ## Conventions kept from cloud-registry
 
