@@ -19,6 +19,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 GROUPS = ("generic", "tes", "wes")
@@ -206,14 +207,34 @@ def create(group: str, subgroup: str, name: str, root: Path = ROOT) -> Path:
     target = root / new["directory"]
     if target.exists():
         raise FileExistsError(f"{new['directory']} exists")
-    shutil.copytree(root / old["directory"], target, ignore=IGNORED)
+    # Built in a temporary directory next to the plugins (one file system),
+    # then moved into place: a failure leaves no half-made package behind
+    with tempfile.TemporaryDirectory(dir=root / "plugins", prefix=".new-") as tmp:
+        package = Path(tmp) / "package"
+        _build(package, root / old["directory"], name, old, new)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        package.rename(target)
+    return target
+
+
+def _build(
+    target: Path, template: Path, name: str, old: dict[str, str], new: dict[str, str]
+) -> None:
+    """Copy the template to a directory and rename it.
+
+    Args:
+        target: Directory of the new package (not existing yet).
+        template: Directory of the template.
+        name: Name of the new plugin.
+        old: Names of the template (cf. `names()`).
+        new: Names of the new plugin.
+    """
+    shutil.copytree(template, target, ignore=IGNORED)
     src = target / "src"
     shutil.rmtree(src / "foca_plugins")
     module = src.joinpath(*new["import_path"].split("."))
     shutil.copytree(
-        root / old["directory"] / "src" / "foca_plugins" / Path(*TEMPLATE),
-        module,
-        ignore=IGNORED,
+        template / "src" / "foca_plugins" / Path(*TEMPLATE), module, ignore=IGNORED
     )
     for path in sorted(target.rglob("*")):
         if path.is_file() and path.suffix in {".py", ".toml"}:
@@ -233,7 +254,6 @@ def create(group: str, subgroup: str, name: str, root: Path = ROOT) -> Path:
         test.rename(test.with_name(f"test_{name.replace('-', '_')}.py"))
     (target / "README.md").write_text(README.format(**new))
     (target / "CHANGELOG.md").write_text(CHANGELOG.format(**new))
-    return target
 
 
 def main(argv: Sequence[str] | None = None, root: Path = ROOT) -> int:

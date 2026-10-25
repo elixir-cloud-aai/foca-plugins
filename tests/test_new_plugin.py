@@ -85,6 +85,28 @@ def test_create(repo: Path) -> None:
     assert "`foca-plugin-generic-identity-owner-tags-v<version>`" in changelog
 
 
+def test_create_leaves_nothing_on_failure(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure while building leaves neither the package nor a temporary copy.
+
+    Args:
+        repo: Repository root.
+        monkeypatch: Patches.
+    """
+    before = sorted(repo.rglob("*"))
+
+    def fail(target: Path, *_: object) -> None:
+        target.mkdir()
+        (target / "pyproject.toml").write_text("")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(new_plugin, "_build", fail)
+    with pytest.raises(OSError, match="disk full"):
+        new_plugin.create("generic", "identity", "owner-tags", repo)
+    assert sorted(repo.rglob("*")) == before
+
+
 def test_create_refuses_existing(repo: Path) -> None:
     """Existing directories are not overwritten.
 
