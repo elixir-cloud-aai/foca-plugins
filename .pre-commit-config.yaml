@@ -20,7 +20,7 @@ repos:
       - id: ruff-check
       - id: ruff-format
   - repo: https://github.com/semgrep/pre-commit
-    rev: 51a77ed8e8899262edd0674395baba66cc64b0aa  # frozen: v1.182.0
+    rev: dfdeebdd309a043859ba33a555839911e7b11801  # frozen: v1.182.1
     hooks:
       - id: semgrep
         args:
