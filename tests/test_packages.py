@@ -153,15 +153,25 @@ def test_main(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     ]
 
 
-def test_main_changed(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Known changes select the affected plugins only.
+def test_main_changed(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Known changes select the affected plugins only, possibly none.
 
     Args:
         repo: Repository root.
         monkeypatch: Patches.
+        capsys: Captured output.
     """
     monkeypatch.setattr(packages, "changed_files", lambda *_: ["docs/index.md"])
     assert packages.main(["changed", "a", "b"], repo) == 0
+    assert capsys.readouterr().out == "[]\n"
+    changed = [f"{NOOP.path}/README.md"]
+    monkeypatch.setattr(packages, "changed_files", lambda *_: changed)
+    assert packages.main(["changed", "a", "b"], repo) == 0
+    assert json.loads(capsys.readouterr().out) == [
+        {"path": NOOP.path, "name": NOOP.name}
+    ]
 
 
 def test_main_mypy(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -171,5 +181,12 @@ def test_main_mypy(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         repo: Repository root.
         monkeypatch: Patches.
     """
-    monkeypatch.setattr(packages, "mypy", lambda paths, root: len(paths))
-    assert packages.main(["mypy", "a", "b"], repo) == 2
+    calls: list[tuple[list[str], Path]] = []
+
+    def mypy(paths: list[str], root: Path) -> int:
+        calls.append((paths, root))
+        return 7
+
+    monkeypatch.setattr(packages, "mypy", mypy)
+    assert packages.main(["mypy", "a", "b"], repo) == 7
+    assert calls == [(["a", "b"], repo)]
