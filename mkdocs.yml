@@ -1,0 +1,84 @@
+site_name: FOCA plugins
+site_description: >-
+  Plugins for gateway services built with FOCA, by ELIXIR On-Cloud
+# Read the Docs serves each version under its own path (e.g., `/en/latest/`)
+site_url: !ENV [READTHEDOCS_CANONICAL_URL, "https://foca-plugins.readthedocs.io/en/latest/"]
+repo_url: https://github.com/elixir-cloud-aai/foca-plugins
+repo_name: elixir-cloud-aai/foca-plugins
+edit_uri: edit/dev/docs/
+copyright: Copyright &copy; ELIXIR On-Cloud
+
+# Python hooks of the build (not part of the site, nor their bytecode)
+exclude_docs: |
+  hooks.py
+  __pycache__/
+hooks:
+  - docs/hooks.py
+
+# Files included in pages (see `docs/hooks.py` and `pymdownx.snippets`)
+watch:
+  - README.md
+  - plugins
+  - scripts/packages.py
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  # Sections of `README.md` (between `--8<-- [start:<name>]` and
+  # `--8<-- [end:<name>]`), so that they are not written twice; fails if a
+  # file or section is missing
+  - pymdownx.snippets:
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+nav:
+  - Home: index.md
+  - Installing: installing.md
+  - Writing a plugin: writing-plugins.md
+  - Plugin catalogue: catalogue.md
+  - Contributing: contributing.md
+  - Releasing: releasing.md
