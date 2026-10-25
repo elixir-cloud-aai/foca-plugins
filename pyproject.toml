@@ -1,0 +1,140 @@
+# Root of the uv workspace (https://docs.astral.sh/uv/concepts/projects/workspaces/),
+# for development only: it has no `[project]` table (a virtual root), so it
+# is never built or published. It holds the configuration of the tools,
+# shared by all packages, and the dependency groups for development and the
+# docs. The packages are the members below: one distribution per plugin
+# (`plugins/<group>/<subgroup>/<name>/`) and the meta distribution
+# `foca-plugins` (`meta/`); see "Writing a plugin" in the docs
+
+[tool.uv.workspace]
+members = ["meta", "plugins/*/*/*"]
+
+[tool.uv]
+# `uv sync` installs every package of the workspace (editable) with the
+# development tools; CI installs one package at a time (`uv sync --package`)
+default-groups = ["dev"]
+# The build backend of all packages, pinned for reproducible release builds
+# (`uv build`, `.github/workflows/release.yml`); the packages' own
+# `build-system.requires` give the lower bound. Not bumped by Dependabot;
+# update by hand
+build-constraint-dependencies = ["setuptools==84.2.1"]
+
+[tool.uv.sources]
+# TODO(FOCA 0.18.0): the plugin engine (`foca.plugins`) is on FOCA's `dev`
+# branch only. Once FOCA 0.18.0 is released, remove this source, so that
+# FOCA comes from PyPI, raise the lower bound of `foca` in every plugin to
+# `>=0.18.0`, and add 0.18.0 as the lowest FOCA to the test matrix of
+# `.github/workflows/ci.yml` (see "Compatibility" in `docs/writing-plugins.md`).
+# The packages that the release workflow publishes don't contain this source
+foca = { git = "https://github.com/elixir-cloud-aai/foca", branch = "dev" }
+
+[dependency-groups]
+# Local hooks of `.pre-commit-config.yaml` and CI use these too
+dev = [
+    "ast-grep-cli>=0.51",
+    "coverage>=7.16",
+    "mypy>=2.4",
+    "pip-audit>=2.10",
+    "pre-commit>=4.6",
+    "pytest>=9.1",
+    "ruff>=0.17.1",
+]
+# Documentation (`mkdocs.yml`), built by Read the Docs (`.readthedocs.yaml`)
+# and in CI. The packages that add warnings, which fail the strict build,
+# are listed too, to bound their major versions (new warnings of minor
+# releases still fail it)
+docs = [
+    "mkdocs>=1.6.1,<2",
+    "mkdocs-material>=9.7.7,<10",
+    "pymdown-extensions>=12.3,<13",
+]
+# Tools of the release workflow (`.github/workflows/release.yml`), exact
+# versions, installed from `uv.lock` with their hashes
+release = ["twine==7.0.0"]
+
+[tool.ruff]
+line-length = 88
+# The lowest Python version that the plugins support: FOCA's (its
+# `requires-python`), as in the plugins' `requires-python`
+target-version = "py311"
+
+[tool.ruff.lint]
+# The rule set shared by FOCA and FOCA apps (as in cloud-registry): FOCA's
+# rules plus `G` and `S`; `D` applies everywhere, also to the tests, scripts
+# and docs hooks
+select = [
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "D",    # pydocstyle (docstrings)
+    "E",    # pycodestyle errors
+    "F",    # Pyflakes
+    "G",    # flake8-logging-format
+    "I",    # isort
+    "PL",   # Pylint
+    "RUF",  # Ruff-specific rules
+    "S",    # flake8-bandit (security)
+    "SIM",  # flake8-simplify
+    "UP",   # pyupgrade
+    "W",    # pycodestyle warnings
+]
+ignore = [
+    # Complexity limits, as in FOCA and cloud-registry
+    "PLR0912",  # too-many-branches
+    "PLR0913",  # too-many-arguments
+    "PLR0915",  # too-many-statements
+    "PLR0917",  # too-many-positional-arguments
+    # Flags HTTP status codes and other literals (e.g., lengths), which are
+    # clear as is
+    "PLR2004",  # magic-value-comparison
+]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["foca_plugins", "scripts"]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest checks with `assert`
+"**/tests/**" = ["S101"]
+# The tests of the scripts run Git, with arguments, never through a shell
+"tests/**" = ["S603", "S607"]
+# The scripts run Git, the tools of the checks and the given commands, with
+# arguments, never through a shell
+"scripts/**" = ["S603", "S607"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+# Run through `python -m scripts.packages mypy`, which adds the plugins'
+# `src/` directories to the search path and checks all packages, or the
+# given ones, with the scripts, their tests and the docs hooks
+python_version = "3.11"
+# Plugins share the PEP 420 namespace packages `foca_plugins`,
+# `foca_plugins.<group>` and `foca_plugins.<group>.<subgroup>` (no
+# `__init__.py`); module names are derived from the search path
+explicit_package_bases = true
+# Complete type hints: all functions annotated, generic types parametrized
+# (instead of ruff's `ANN` rules, which report missing hints only, without
+# checking them)
+disallow_untyped_defs = true
+disallow_any_generics = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+# Test modules of different packages may have the same names
+addopts = ["--import-mode=importlib", "--strict-markers"]
+# For the repository's own tests, which import `scripts.<name>`
+pythonpath = ["."]
+testpaths = ["tests", "plugins"]
+
+[tool.coverage.run]
+# The measured code (`--source`) is set per run: the `src/` directory of a
+# plugin, or `scripts,docs` for the tests of the scripts and docs hooks
+branch = true
+
+[tool.coverage.report]
+exclude_also = ['if __name__ == "__main__":']
+# `coverage report` (and CI) fails below 100%; Codecov's targets are the same
+# (`codecov.yml`)
+fail_under = 100
+show_missing = true
