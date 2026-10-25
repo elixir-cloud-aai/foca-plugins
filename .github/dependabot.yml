@@ -1,0 +1,43 @@
+version: 2
+# Every entry targets `dev` (`target-branch`), which takes all pull
+# requests whatever the default branch is (`main` only moves forward to
+# releases); security updates always target the default branch, though
+updates:
+  # `uv.lock` and the `pyproject.toml` files of the workspace (the root and
+  # every package)
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+    target-branch: dev
+    versioning-strategy: increase-if-necessary
+    ignore:
+      # FOCA comes from its `dev` branch until 0.18.0 is released (see
+      # `tool.uv.sources` in `pyproject.toml`); its bounds are raised by hand
+      - dependency-name: foca
+    groups:
+      # Dependencies of the documentation (the `docs` group), in pull
+      # requests of their own
+      docs-dependencies:
+        patterns: ["mkdocs", "mkdocs-*", "pymdown-extensions"]
+      # Dependencies match the first group listed
+      python-dependencies:
+        patterns: ["*"]
+  # Actions in the workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    target-branch: dev
+    groups:
+      github-actions:
+        patterns: ["*"]
+  # Hook revisions in `.pre-commit-config.yaml`
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: monthly
+    target-branch: dev
+    groups:
+      pre-commit:
+        patterns: ["*"]
