@@ -109,6 +109,8 @@ def previous(tag: str, commit: str, root: Path = ROOT) -> str | None:
         ValueError: Git found a tag that isn't one of the distribution.
     """
     name = tag.rpartition("-v")[0]
+    # Arguments are a list from repository data; no shell is involved.
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
     result = subprocess.run(
         [
             "git",

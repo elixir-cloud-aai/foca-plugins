@@ -240,6 +240,8 @@ def changed_files(base: str, head: str, root: Path = ROOT) -> list[str] | None:
     """
     if NO_COMMIT.fullmatch(base):
         return None
+    # Arguments are a list from repository data; no shell is involved.
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
     result = subprocess.run(
         [
             "git",
@@ -283,6 +285,8 @@ def mypy(paths: Sequence[str], root: Path = ROOT) -> int:
         **os.environ,
         "MYPYPATH": os.pathsep.join(str(root / p.path / "src") for p in packages),
     }
+    # Arguments are a list from repository data; no shell is involved.
+    # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
     return subprocess.run(
         [sys.executable, "-m", "mypy", *targets], cwd=root, env=env, check=False
     ).returncode
