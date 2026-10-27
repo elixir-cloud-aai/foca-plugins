@@ -206,9 +206,13 @@ def test_on_route_returns_permutation(plugin: Random) -> None:
     candidates = tuple(BACKENDS)
     ctx = make_context()
     result = plugin.on_route(candidates, ctx)
+    assert isinstance(result, list)
     assert sorted(result, key=lambda b: b.id) == BACKENDS
     assert candidates == tuple(BACKENDS)
     assert ctx.annotations == {"candidates": 8, "seeded": False}
+    mutable = list(BACKENDS)
+    assert plugin.on_route(mutable, make_context()) is not mutable
+    assert mutable == BACKENDS
 
 
 def test_on_route_uses_system_randomness(
@@ -231,18 +235,23 @@ def test_on_route_uses_system_randomness(
     assert used == ["SystemRandom"]
 
 
-def test_on_route_varies_without_seed(plugin: Random) -> None:
-    """Unseeded orders differ between calls (with near certainty).
+def test_on_route_varies_without_seed(
+    plugin: Random, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unseeded orders follow the system's entropy, which differs per call.
+
+    The entropy (`os.urandom`, as used by `random.SystemRandom`) is replaced
+    by a fixed stream, so that the outcome is deterministic.
 
     Args:
         plugin: Plugin.
+        monkeypatch: Pytest fixture.
     """
-    orders = {
-        tuple(b.id for b in plugin.on_route(BACKENDS, make_context()))
-        for _ in range(20)
-    }
-    # 8! orders: 20 equal draws have a probability of about 1e-88
-    assert len(orders) > 1
+    stream = random.Random(1)  # noqa: S311 (fixed entropy for the test)
+    monkeypatch.setattr(random, "_urandom", stream.randbytes)
+    first = plugin.on_route(BACKENDS, make_context())
+    second = plugin.on_route(BACKENDS, make_context())
+    assert first != second
 
 
 def test_on_route_is_reproducible_with_seed(plugin: Random) -> None:
