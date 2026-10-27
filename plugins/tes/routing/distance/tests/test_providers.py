@@ -1,8 +1,10 @@
 """Tests of the location providers and the cache of `tes.routing.distance`."""
 
 from pathlib import Path
+import threading
 import time
 from typing import Any
+from unittest.mock import MagicMock
 
 from foca.plugins import Context, Location, PluginError, Principal
 from foca.plugins.base import EmptyModel
@@ -11,9 +13,9 @@ from foca.utils.http import RequestMaybeSent
 import pytest
 import requests
 
+from foca_plugins.tes.routing.distance.cache import TtlCache
 from foca_plugins.tes.routing.distance.providers import (
     DbipProvider,
-    LocationCache,
     LookupFailed,
     OfflineProvider,
     coordinates,
@@ -94,20 +96,30 @@ def search_url(query: str) -> str:
     return url
 
 
-def make_dbip(clock: Clock | None = None, interval: float = 0) -> DbipProvider:
+def make_dbip(
+    clock: Clock | None = None, interval: float = 0, cache_size: int = 0
+) -> DbipProvider:
     """Create the online provider.
 
     Args:
-        clock: Clock of the throttle; the real one if not given.
+        clock: Clock of the throttle, back-off and caches; the real one if
+            not given.
         interval: Seconds between Nominatim requests.
+        cache_size: Size of its caches; by default, nothing is cached.
 
     Returns:
         Provider.
     """
     if clock is None:
-        return DbipProvider(DBIP, NOMINATIM, AGENT, interval)
+        return DbipProvider(DBIP, NOMINATIM, AGENT, interval, cache_size=cache_size)
     return DbipProvider(
-        DBIP, NOMINATIM, AGENT, interval, clock=clock, sleep=clock.sleep
+        DBIP,
+        NOMINATIM,
+        AGENT,
+        interval,
+        cache_size=cache_size,
+        clock=clock,
+        sleep=clock.sleep,
     )
 
 
@@ -339,8 +351,8 @@ def test_dbip_provider_throttles_nominatim() -> None:
     assert clock.slept == [1, 1]
 
 
-def test_dbip_provider_throttle_respects_deadline() -> None:
-    """A wait beyond the deadline fails the lookup instead of sleeping."""
+def test_dbip_provider_books_turn_before_asking_dbip() -> None:
+    """Without a turn before the deadline, DB-IP isn't asked at all."""
     clock = Clock()
     provider = make_dbip(clock, interval=60)
     http = FakeHttp()
@@ -348,17 +360,154 @@ def test_dbip_provider_throttle_respects_deadline() -> None:
     http.add("GET", search_url("Zurich, Zurich CH"), json=[])
     with pytest.raises(LookupFailed, match="rate limit"):
         provider.locate(ADDRESS, make_context(http, seconds=10))
+    # the first lookup used its turn; the second one would come too late
+    assert [call.url for call in http.calls] == [
+        f"{DBIP}/{ADDRESS}",
+        search_url("Zurich, Zurich CH"),
+    ]
+    with pytest.raises(LookupFailed, match="rate limit"):
+        provider.locate("1.1.1.1", make_context(http, seconds=10))
+    assert len(http.calls) == 2
     assert clock.slept == []
 
 
-def test_cache_hits_and_expires() -> None:
-    """Locations are kept for the TTL, misses for theirs."""
+def test_dbip_provider_waits_outside_the_lock() -> None:
+    """A lookup waiting for its turn doesn't block others from booking."""
+    provider = make_dbip(interval=0.5)
+    http = FakeHttp()
+    for index in range(3):
+        http.add("GET", f"{DBIP}/9.9.9.{index}", json=PLACE)
+    http.add("GET", search_url("Zurich, Zurich CH"), json=[{"lat": 1, "lon": 2}])
+    # the first lookup takes the first turn at once
+    provider.locate("9.9.9.0", make_context(http))
+    waiting = threading.Thread(
+        target=provider.locate, args=("9.9.9.1", make_context(http))
+    )
+    waiting.start()  # books the next turn, then waits about 0.5 s
+    time.sleep(0.05)
+    started = time.monotonic()
+    # a third turn would come after its deadline: it fails at once
+    with pytest.raises(LookupFailed, match="rate limit"):
+        provider.locate("9.9.9.2", make_context(http, seconds=0.2))
+    assert time.monotonic() - started < 0.3
+    waiting.join(5)
+    # DB-IP and Nominatim for the first two; nothing for the third
+    assert len(http.calls) == 4
+
+
+def test_dbip_provider_caches_places_and_coordinates() -> None:
+    """Places (by address) and coordinates (by place) are asked for once."""
     clock = Clock()
-    cache = LocationCache(size=10, ttl=100, miss_ttl=10, clock=clock)
+    provider = make_dbip(clock, cache_size=10)
+    http = FakeHttp()
+    http.add("GET", f"{DBIP}/{ADDRESS}", json=PLACE)
+    http.add("GET", f"{DBIP}/1.1.1.1", json=PLACE)
+    http.add("GET", search_url("Zurich, Zurich CH"), json=[{"lat": 1, "lon": 2}])
+    here = Location(latitude=1, longitude=2)
+    assert provider.locate(ADDRESS, make_context(http)) == here
+    assert provider.locate(ADDRESS, make_context(http)) == here
+    assert provider.locate("1.1.1.1", make_context(http)) == here
+    assert [call.url for call in http.calls] == [
+        f"{DBIP}/{ADDRESS}",
+        search_url("Zurich, Zurich CH"),
+        f"{DBIP}/1.1.1.1",
+    ]
+    clock.now += 86401
+    provider.locate(ADDRESS, make_context(http))
+    assert len(http.calls) == 5
+
+
+def test_dbip_provider_keeps_place_if_nominatim_fails() -> None:
+    """A failure of Nominatim doesn't cost another request to DB-IP."""
+    provider = make_dbip(cache_size=10)
+    http = FakeHttp()
+    http.add("GET", f"{DBIP}/{ADDRESS}", json=PLACE)
+    http.add("GET", search_url("Zurich, Zurich CH"), status=503, json=[])
+    with pytest.raises(LookupFailed):
+        provider.locate(ADDRESS, make_context(http))
+    with pytest.raises(LookupFailed):
+        provider.locate(ADDRESS, make_context(http))
+    assert [call.url for call in http.calls].count(f"{DBIP}/{ADDRESS}") == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "body"), [(200, {"error": "over query limit"}), (429, {})]
+)
+def test_dbip_provider_backs_off(status: int, body: Any) -> None:
+    """After DB-IP refused a lookup, it is asked nothing for a while.
+
+    Args:
+        status: HTTP status of the refusal.
+        body: Body of the refusal.
+    """
+    clock = Clock()
+    provider = make_dbip(clock)
+    http = FakeHttp()
+    http.add("GET", f"{DBIP}/{ADDRESS}", status=status, json=body)
+    with pytest.raises(LookupFailed, match=r"refused|429"):
+        provider.locate(ADDRESS, make_context(http))
+    clock.now += 599
+    with pytest.raises(LookupFailed, match="backing off"):
+        provider.locate(ADDRESS, make_context(http))
+    assert len(http.calls) == 1
+    clock.now += 2
+    with pytest.raises(LookupFailed):
+        provider.locate(ADDRESS, make_context(http))
+    assert len(http.calls) == 2
+
+
+def test_dbip_provider_other_errors_dont_back_off() -> None:
+    """Other failures of DB-IP (e.g., 503) don't stop further lookups."""
+    provider = make_dbip()
+    http = FakeHttp()
+    http.add("GET", f"{DBIP}/{ADDRESS}", status=503, json={})
+    for _ in range(2):
+        with pytest.raises(LookupFailed, match="503"):
+            provider.locate(ADDRESS, make_context(http))
+    assert len(http.calls) == 2
+
+
+def test_offline_provider_fails_after_close(database: Path) -> None:
+    """Lookups after `close()` fail; they aren't misses.
+
+    Args:
+        database: Test database.
+    """
+    provider = OfflineProvider(database)
+    provider.close()
+    with pytest.raises(LookupFailed, match="closed"):
+        provider.locate(ADDRESS, make_context(None))
+
+
+def test_offline_provider_fails_if_closed_during_lookup(
+    database: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reader closed while it reads fails the lookup, too.
+
+    Args:
+        database: Test database.
+        monkeypatch: Pytest fixture.
+    """
+    provider = OfflineProvider(database)
+    reader = provider._reader
+
+    def get(address: str) -> Any:
+        provider.close()
+        return reader.get(address)
+
+    monkeypatch.setattr(provider, "_reader", MagicMock(get=get, close=reader.close))
+    with pytest.raises(LookupFailed, match="closed"):
+        provider.locate(ADDRESS, make_context(None))
+
+
+def test_cache_hits_and_expires() -> None:
+    """Values are kept for their TTL."""
+    clock = Clock()
+    cache: TtlCache[str, Location | None] = TtlCache(size=10, clock=clock)
     here = Location(latitude=1, longitude=2)
     assert cache.get("9.9.9.9") == (False, None)
-    cache.put("9.9.9.9", here)
-    cache.put("4.4.4.4", None)
+    cache.put("9.9.9.9", here, 100)
+    cache.put("4.4.4.4", None, 10)
     assert cache.get("9.9.9.9") == (True, here)
     assert cache.get("4.4.4.4") == (True, None)
     clock.now += 11
@@ -370,36 +519,25 @@ def test_cache_hits_and_expires() -> None:
 
 def test_cache_evicts_least_recently_used() -> None:
     """Beyond its size, the entry used least recently goes."""
-    cache = LocationCache(size=2, ttl=100, miss_ttl=100)
+    cache: TtlCache[str, Location | None] = TtlCache(size=2)
     first, second = Location(latitude=1, longitude=1), Location(latitude=2, longitude=2)
-    cache.put("1.0.0.1", first)
-    cache.put("2.0.0.2", second)
+    cache.put("1.0.0.1", first, 100)
+    cache.put("2.0.0.2", second, 100)
     assert cache.get("1.0.0.1") == (True, first)
-    cache.put("3.0.0.3", None)
+    cache.put("3.0.0.3", None, 100)
     assert cache.get("2.0.0.2") == (False, None)
     assert cache.get("1.0.0.1") == (True, first)
     assert cache.get("3.0.0.3") == (True, None)
 
 
-@pytest.mark.parametrize(
-    ("size", "ttl", "miss_ttl", "value"),
-    [
-        (0, 100, 100, Location(latitude=1, longitude=1)),
-        (10, 0, 100, Location(latitude=1, longitude=1)),
-        (10, 100, 0, None),
-    ],
-)
-def test_cache_can_be_turned_off(
-    size: int, ttl: int, miss_ttl: int, value: Location | None
-) -> None:
-    """Size 0 turns the cache off; TTL 0 keeps no locations or misses.
+@pytest.mark.parametrize(("size", "ttl"), [(0, 100), (10, 0)])
+def test_cache_can_be_turned_off(size: int, ttl: int) -> None:
+    """Size 0 turns the cache off; TTL 0 keeps nothing.
 
     Args:
         size: Size of the cache.
-        ttl: TTL of locations.
-        miss_ttl: TTL of misses.
-        value: Value to cache.
+        ttl: TTL of the value.
     """
-    cache = LocationCache(size=size, ttl=ttl, miss_ttl=miss_ttl)
-    cache.put("9.9.9.9", value)
+    cache: TtlCache[str, Location | None] = TtlCache(size=size)
+    cache.put("9.9.9.9", Location(latitude=1, longitude=1), ttl)
     assert cache.get("9.9.9.9") == (False, None)

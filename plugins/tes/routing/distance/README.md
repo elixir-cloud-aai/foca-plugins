@@ -30,8 +30,9 @@ successor of proTES's distance-based task distribution.
    `content`, are left out). Hosts of buckets (e.g., `s3://bucket/key`)
    are names without addresses, so such inputs can't be located.
 2. Locates each host, at most `max_hosts` per task: host names are
-   resolved with the system resolver (within `resolve_timeout`), and the
-   first **public** address is looked up by the provider. Private
+   resolved with the system resolver, all at once, within
+   `resolve_timeout` per call (and never beyond the step's deadline), and
+   the first **public** address is looked up by the provider. Private
    addresses (e.g., in-cluster storage) are never looked up.
 3. Locates each candidate backend: its location in the backend list
    (`location: {latitude: …, longitude: …}`, FOCA's `Backend.location`)
@@ -52,18 +53,30 @@ located. It never rejects a request.
 Annotations, counts only (hosts, addresses and places of inputs could be
 personal data): `inputs` (input URLs), `input_hosts`, `located_inputs`
 (input URLs with a location), `located_backends`, `lookups` (by the
-provider), `cache_hits` and `failed_lookups`. The order is in the
-provenance of each request (`route.candidates_out`).
+provider), `cache_hits`, `failed_lookups` and `skipped_lookups`
+(addresses not looked up for lack of time or beyond `dbip_max_lookups`).
+The order is in the provenance of each request (`route.candidates_out`).
 
-### Cache
+### Cache and limits
 
 Each process caches the lookups of addresses, also misses (addresses
 without location), so that backends are looked up once per process until
 the entry expires, not per task: `cache_ttl` (1 day) for locations,
-`cache_miss_ttl` (1 hour) for misses, at most `cache_size` addresses (the
-least recently used go first). Failed lookups (e.g., a service is down)
-aren't cached. FOCA 0.18 gives plugins no database, so the cache is not
-shared between processes.
+`cache_miss_ttl` (1 hour) for misses and `cache_failure_ttl` (1 minute)
+for failed lookups (e.g., a service is down), at most `cache_size`
+addresses (the least recently used go first). FOCA 0.18 gives plugins no
+database, so the cache is not shared between processes.
+
+Name resolution can't be interrupted, and hosts of inputs come from
+clients, so slow or hostile name servers must not tie up the gateway's
+plugin workers:
+
+- all host names of a call are resolved in parallel, within one
+  `resolve_timeout` (2 seconds), well below FOCA's default step timeout;
+- each process resolves at most `resolve_threads` (16) names at a time,
+  and each name at most once at a time; further names stay unresolved;
+- the addresses of names, also of names that couldn't be resolved, are
+  cached for `resolve_cache_ttl` (5 minutes).
 
 ## Configuration
 
@@ -93,14 +106,19 @@ know them: they are exact, and need no lookup.
 | `config.database` | path of an existing file | none; required for `offline` | GeoIP database in MaxMind DB format |
 | `config.dbip_url` | `https` URL | `https://api.db-ip.com/v2/free` | DB-IP's API (`dbip`) |
 | `config.nominatim_url` | `https` URL | `https://nominatim.openstreetmap.org` | Nominatim, e.g., an instance of your own (`dbip`) |
-| `config.user_agent` | string, 1 to 256 characters | `foca-plugin-tes-routing-distance` | user agent of the requests (`dbip`); Nominatim's usage policy asks for one that identifies your gateway, e.g., with a contact |
+| `config.user_agent` | visible ASCII and spaces, 1 to 256 characters, not starting with a space | `foca-plugin-tes-routing-distance` | user agent of the requests (`dbip`); Nominatim's usage policy asks for one that identifies your gateway, e.g., with a contact |
 | `config.nominatim_interval` | seconds, 0 to 60 | `1.0` | time between requests to Nominatim, per process (its policy: at most 1 per second) |
+| `config.dbip_backoff` | seconds, 0 to 86400 | `600` | time to ask DB-IP nothing after it refused a lookup, e.g., over its daily quota (`dbip`) |
+| `config.dbip_max_lookups` | 1 to 1000 | `5` | uncached lookups per call (`dbip`), so that no single task uses up DB-IP's quota |
 | `config.locate_backends` | boolean | `true` | whether backends without configured location are located by their address |
 | `config.max_hosts` | 1 to 1000 | `20` | input hosts to locate per task |
-| `config.resolve_timeout` | seconds, up to 60 | `5.0` | time to resolve a host name (and never beyond the step's deadline) |
-| `config.cache_size` | ≥ 0 | `10000` | addresses in the cache; 0 turns it off |
+| `config.resolve_timeout` | seconds, up to 60 | `2.0` | time to resolve the host names of a call, in total (and never beyond the step's deadline) |
+| `config.resolve_threads` | 1 to 256 | `16` | host names resolved at a time, per process |
+| `config.resolve_cache_ttl` | seconds, ≥ 0 | `300` | time to keep the addresses of host names, also of names that couldn't be resolved |
+| `config.cache_size` | ≥ 0 | `10000` | addresses in the cache (and host names, and places with `dbip`); 0 turns the caches off |
 | `config.cache_ttl` | seconds, ≥ 0 | `86400` | time to keep located addresses |
 | `config.cache_miss_ttl` | seconds, ≥ 0 | `3600` | time to keep addresses without location |
+| `config.cache_failure_ttl` | seconds, ≥ 0 | `60` | time to keep addresses whose lookup failed as unlocated |
 
 The plugin has no parameters.
 
@@ -150,9 +168,16 @@ the place's coordinates, as proTES did. Requests go through the gateway's
 guarded HTTP client (`ctx.http`: `https`, public addresses, the step's
 deadline). It needs no database, but it sends data to third parties for
 tasks whose addresses aren't cached (see below), is slower, and has rate
-limits: DB-IP's free API allows a limited number of requests per day, and
-Nominatim's public instance one per second. Use your own Nominatim
-instance (`nominatim_url`) if you can.
+limits: DB-IP's free API allows 500 requests per day, and Nominatim's
+public instance one per second. The plugin caches places and coordinates,
+looks up at most `dbip_max_lookups` uncached addresses per call, books
+Nominatim's turns before asking DB-IP, and backs off for `dbip_backoff`
+when DB-IP refuses lookups. Use your own Nominatim instance
+(`nominatim_url`) if you can.
+
+DB-IP's page of the free API asks for no attribution; check DB-IP's terms
+of service for your use. Nominatim's data is © OpenStreetMap contributors
+(ODbL); the plugin uses the coordinates of places only to rank backends.
 
 ## Data transfers
 

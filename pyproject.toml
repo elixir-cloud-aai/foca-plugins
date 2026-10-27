@@ -26,6 +26,8 @@ dev = [
     "coverage>=7.16",
     # Writes the GeoIP database fixtures of `tes.routing.distance`'s tests
     "mmdb-writer>=0.2.7",
+    # Networks of those fixtures (also a dependency of mmdb-writer)
+    "netaddr>=1.3",
     "mypy>=2.4",
     "pip-audit>=2.10",
     "pre-commit>=4.6",

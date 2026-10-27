@@ -15,16 +15,19 @@ Locations come from:
   DB-IP", https://db-ip.com), or, as an explicit opt-in, DB-IP's free API
   and Nominatim (`dbip`), which receive the addresses and places.
 
-Lookups (also misses) are cached per process, with TTLs; failed lookups
-aren't cached. Annotations hold counts only: hosts, addresses and places
-of inputs could be personal data.
+Host names are resolved in parallel, within a time budget per call and
+with a bounded number of resolver threads per process. Resolutions and
+lookups (also misses and, briefly, failures) are cached per process, with
+TTLs. Annotations hold counts only: hosts, addresses and places of inputs
+could be personal data.
 
 The plugin API is documented in FOCA's `docs/plugins.md`
 (https://foca.readthedocs.io/en/latest/plugins/).
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
+import time
 from typing import Literal
 
 from foca.plugins import Backend, Context, Location, NotApplicable, Plugin
@@ -38,15 +41,17 @@ from pydantic import (
     model_validator,
 )
 
+from foca_plugins.tes.routing.distance.cache import TtlCache
 from foca_plugins.tes.routing.distance.geo import (
+    Resolver,
     distance_km,
     input_urls,
+    literal_address,
     public_address,
     url_host,
 )
 from foca_plugins.tes.routing.distance.providers import (
     DbipProvider,
-    LocationCache,
     LookupFailed,
     OfflineProvider,
     Provider,
@@ -71,16 +76,29 @@ class DistanceConfig(BaseModel):
             application (e.g., with a contact).
         nominatim_interval: Seconds between requests to Nominatim, per
             process (its usage policy allows one per second).
+        dbip_backoff: Seconds to ask DB-IP nothing after it refused a
+            lookup (e.g., over its daily quota).
+        dbip_max_lookups: Maximum number of lookups by DB-IP and Nominatim
+            per call (not counting cached ones); further addresses are not
+            located in that call, so that no single task uses up DB-IP's
+            quota.
         locate_backends: Whether backends without configured location are
             located by their address; if not, they rank after the located
             ones.
         max_hosts: Maximum number of input hosts to locate per task; inputs
             on further hosts are not located.
-        resolve_timeout: Seconds to resolve a host name.
-        cache_size: Maximum number of cached addresses; 0 turns the cache
-            off.
+        resolve_timeout: Seconds to resolve the host names of a call, in
+            total (names are resolved in parallel).
+        resolve_threads: Maximum number of host names resolved at a time,
+            per process; further names are not resolved.
+        resolve_cache_ttl: Seconds to keep the addresses of host names,
+            also of names that couldn't be resolved.
+        cache_size: Maximum number of cached addresses (and of cached host
+            names and places); 0 turns the caches off.
         cache_ttl: Seconds to keep located addresses.
         cache_miss_ttl: Seconds to keep addresses without location.
+        cache_failure_ttl: Seconds to keep addresses whose lookup failed as
+            unlocated, so that failures aren't retried on every request.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -89,16 +107,24 @@ class DistanceConfig(BaseModel):
     database: FilePath | None = None
     dbip_url: str = "https://api.db-ip.com/v2/free"
     nominatim_url: str = "https://nominatim.openstreetmap.org"
+    # visible ASCII and spaces, not starting with a space (a valid header)
     user_agent: str = Field(
-        default="foca-plugin-tes-routing-distance", min_length=1, max_length=256
+        default="foca-plugin-tes-routing-distance",
+        max_length=256,
+        pattern=r"^[\x21-\x7e][\x20-\x7e]*$",
     )
     nominatim_interval: float = Field(default=1.0, ge=0, le=60)
+    dbip_backoff: float = Field(default=600, ge=0, le=86400)
+    dbip_max_lookups: int = Field(default=5, ge=1, le=1000)
     locate_backends: bool = True
     max_hosts: int = Field(default=20, ge=1, le=1000)
-    resolve_timeout: float = Field(default=5.0, gt=0, le=60)
+    resolve_timeout: float = Field(default=2.0, gt=0, le=60)
+    resolve_threads: int = Field(default=16, ge=1, le=256)
+    resolve_cache_ttl: int = Field(default=300, ge=0)
     cache_size: int = Field(default=10000, ge=0)
     cache_ttl: int = Field(default=86400, ge=0)
     cache_miss_ttl: int = Field(default=3600, ge=0)
+    cache_failure_ttl: int = Field(default=60, ge=0)
 
     @field_validator("dbip_url", "nominatim_url")
     @classmethod
@@ -139,62 +165,82 @@ class _Locator:
 
     Attributes:
         provider: Provider of locations.
-        cache: Cache of the plugin.
+        cache: Cache of looked-up locations, by address.
+        resolver: Resolver of host names.
+        settings: Admin settings.
         ctx: Context of the call.
-        resolve_timeout: Seconds to resolve a host name.
+        deadline: Deadline of name resolution in this call
+            (`time.monotonic()` seconds).
+        max_lookups: Maximum number of lookups by the provider in this call;
+            `None` for no limit.
         hosts: Locations of the hosts located in this call.
         lookups: Number of lookups by the provider.
         cache_hits: Number of addresses found in the cache.
         failed_lookups: Number of failed lookups.
+        skipped_lookups: Number of addresses not looked up, for lack of time
+            or as `max_lookups` was reached.
     """
 
     provider: Provider
-    cache: LocationCache
+    cache: TtlCache[str, Location | None]
+    resolver: Resolver
+    settings: DistanceConfig
     ctx: Context
-    resolve_timeout: float
+    deadline: float
+    max_lookups: int | None
     hosts: dict[str, Location | None] = field(default_factory=dict)
     lookups: int = 0
     cache_hits: int = 0
     failed_lookups: int = 0
+    skipped_lookups: int = 0
 
-    def locate(self, host: str) -> Location | None:
-        """Locate a host, once per call.
+    def locate(self, hosts: Iterable[str]) -> None:
+        """Locate hosts not located in this call yet (cf. `hosts`).
+
+        Host names are resolved together, in parallel.
 
         Args:
-            host: Host name or IP address.
-
-        Returns:
-            Location of its public address, if known.
+            hosts: Host names or IP addresses.
         """
-        if host not in self.hosts:
-            self.hosts[host] = self._locate(host)
-        return self.hosts[host]
+        new = [host for host in dict.fromkeys(hosts) if host not in self.hosts]
+        literals = {host: literal_address(host) for host in new}
+        names = [host for host, literal in literals.items() if literal is None]
+        resolved = self.resolver.resolve(names, self.deadline)
+        for host in new:
+            literal = literals[host]
+            addresses = resolved.get(host, ()) if literal is None else (literal,)
+            address = public_address(addresses)
+            self.hosts[host] = None if address is None else self._lookup(address)
 
-    def _locate(self, host: str) -> Location | None:
-        """Locate a host by its public address.
+    def _lookup(self, address: str) -> Location | None:
+        """Look up the location of a public address, from the cache if there.
 
         Args:
-            host: Host name or IP address.
+            address: Public IP address.
 
         Returns:
             Location, if known.
         """
-        timeout = min(self.resolve_timeout, self.ctx.remaining())
-        address = public_address(host, timeout)
-        if address is None:
-            return None
         cached, location = self.cache.get(address)
         if cached:
             self.cache_hits += 1
             return location
+        if self.ctx.remaining() <= 0 or (
+            self.max_lookups is not None and self.lookups >= self.max_lookups
+        ):
+            self.skipped_lookups += 1
+            return None
         self.lookups += 1
         try:
             location = self.provider.locate(address, self.ctx)
         except LookupFailed as exc:
             self.failed_lookups += 1
             self.ctx.log.warning("Lookup failed: %s", exc)
+            self.cache.put(address, None, self.settings.cache_failure_ttl)
             return None
-        self.cache.put(address, location)
+        settings = self.settings
+        ttl = settings.cache_miss_ttl if location is None else settings.cache_ttl
+        self.cache.put(address, location, ttl)
         return location
 
 
@@ -202,8 +248,11 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
     """Route to the backends closest to the task's inputs.
 
     Attributes:
-        provider: Provider of locations (cf. `DistanceConfig.provider`).
-        cache: Cache of looked-up locations, shared by all calls.
+        provider: Provider of locations (cf. `DistanceConfig.provider`);
+            kept after `close()`, when its lookups fail.
+        cache: Cache of looked-up locations, by address, shared by all
+            calls.
+        resolver: Resolver of host names, shared by all calls.
         settings: Validated admin settings.
     """
 
@@ -227,7 +276,8 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
     )
 
     provider: Provider
-    cache: LocationCache
+    cache: TtlCache[str, Location | None]
+    resolver: Resolver
     settings: DistanceConfig
 
     def setup(self, config: DistanceConfig) -> None:
@@ -237,11 +287,16 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
 
         Args:
             config: Validated admin settings.
+
+        Raises:
+            ValueError: The provider is `offline`, but there is no database
+                (prevented by `DistanceConfig`'s validation).
         """
         self.close()
         self.settings = config
         if config.provider == "offline":
-            assert config.database is not None  # noqa: S101 (validated)
+            if config.database is None:
+                raise ValueError("provider 'offline' needs 'database'")
             self.provider = OfflineProvider(config.database)
         else:
             self.provider = DbipProvider(
@@ -249,19 +304,20 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
                 config.nominatim_url,
                 config.user_agent,
                 config.nominatim_interval,
+                backoff=config.dbip_backoff,
+                cache_size=config.cache_size,
+                cache_ttl=config.cache_ttl,
             )
-        self.cache = LocationCache(
-            size=config.cache_size,
-            ttl=config.cache_ttl,
-            miss_ttl=config.cache_miss_ttl,
+        self.cache = TtlCache(config.cache_size)
+        self.resolver = Resolver(
+            config.resolve_threads, config.resolve_cache_ttl, config.cache_size
         )
 
     def close(self) -> None:
-        """Close the provider, if any."""
-        provider = getattr(self, "provider", None)
+        """Close the provider, if any; it stays, and its lookups fail."""
+        provider: Provider | None = getattr(self, "provider", None)
         if provider is not None:
             provider.close()
-            del self.provider
 
     def on_route(self, candidates: Sequence[Backend], ctx: Context) -> list[Backend]:
         """Rank the candidates by their distance to the task's inputs.
@@ -283,12 +339,20 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
         urls = input_urls(ctx.original)
         if not urls:
             raise NotApplicable("The task has no input URLs")
+        settings = self.settings
         locator = _Locator(
-            self.provider, self.cache, ctx, self.settings.resolve_timeout
+            provider=self.provider,
+            cache=self.cache,
+            resolver=self.resolver,
+            settings=settings,
+            ctx=ctx,
+            deadline=time.monotonic() + min(settings.resolve_timeout, ctx.remaining()),
+            max_lookups=(
+                settings.dbip_max_lookups if settings.provider == "dbip" else None
+            ),
         )
         hosts = list(dict.fromkeys(host for url in urls if (host := url_host(url))))
-        for host in hosts[: self.settings.max_hosts]:
-            locator.locate(host)
+        locator.locate(hosts[: settings.max_hosts])
         inputs = [
             location
             for url in urls
@@ -298,6 +362,13 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
         ranked: list[tuple[float, Backend]] = []
         unlocated: list[Backend] = []
         if inputs:
+            if settings.locate_backends:
+                locator.locate(
+                    host
+                    for backend in candidates
+                    if backend.location is None
+                    and (host := url_host(backend.url)) is not None
+                )
             for backend in candidates:
                 location = self._backend_location(backend, locator)
                 if location is None:
@@ -312,6 +383,7 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
         ctx.record("lookups", locator.lookups)
         ctx.record("cache_hits", locator.cache_hits)
         ctx.record("failed_lookups", locator.failed_lookups)
+        ctx.record("skipped_lookups", locator.skipped_lookups)
         if not inputs:
             raise NotApplicable("No input of the task could be located")
         if not ranked:
@@ -319,9 +391,7 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
         ranked.sort(key=lambda item: item[0])  # stable: ties keep their order
         return [backend for _, backend in ranked] + unlocated
 
-    def _backend_location(
-        self, backend: Backend, locator: "_Locator"
-    ) -> Location | None:
+    def _backend_location(self, backend: Backend, locator: _Locator) -> Location | None:
         """Get the location of a backend.
 
         Args:
@@ -330,11 +400,11 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
 
         Returns:
             The configured location, or else that of its host's address
-            (unless `locate_backends` is off), if known.
+            (unless `locate_backends` is off), if located.
         """
         if backend.location is not None:
             return backend.location
         if not self.settings.locate_backends:
             return None
         host = url_host(backend.url)
-        return locator.locate(host) if host is not None else None
+        return locator.hosts.get(host) if host is not None else None

@@ -55,7 +55,7 @@ Issues = "https://github.com/elixir-cloud-aai/foca-plugins/issues"
 [project.entry-points."foca.plugins"]
 "tes.routing.distance" = "foca_plugins.tes.routing.distance:Distance"
 
-# `foca_plugins`, `foca_plugins.generic` and `foca_plugins.generic.example`
+# `foca_plugins`, `foca_plugins.tes` and `foca_plugins.tes.routing`
 # are namespace packages shared with the other plugins (PEP 420): the wheel
 # contains this plugin's package only
 [tool.setuptools.packages.find]

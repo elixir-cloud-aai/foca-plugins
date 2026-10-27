@@ -1,8 +1,8 @@
 """Location providers and the cache of their lookups.
 
 A provider gives the location of a public IP address, or `None` if it
-knows none (a miss, which may be cached). Lookups that fail (e.g., a
-service is unavailable) raise :py:class:`LookupFailed` and aren't cached.
+knows none (a miss). Lookups that fail (e.g., a service is unavailable)
+raise :py:class:`LookupFailed`.
 
 - :py:class:`OfflineProvider` reads a local GeoIP database in MaxMind DB
   format, e.g., DB-IP's "IP to City Lite" (CC BY 4.0): no data leaves the
@@ -10,10 +10,10 @@ service is unavailable) raise :py:class:`LookupFailed` and aren't cached.
 - :py:class:`DbipProvider` asks DB-IP's free API for the place of an
   address (city, region, country), then Nominatim (OpenStreetMap) for its
   coordinates: the address goes to db-ip.com, the place to Nominatim. It
-  sends requests through `ctx.http` only.
+  sends requests through `ctx.http` only, caches places and coordinates,
+  and backs off when DB-IP refuses lookups (e.g., over its quota).
 """
 
-from collections import OrderedDict
 from collections.abc import Callable
 import math
 from pathlib import Path
@@ -27,9 +27,28 @@ from foca.utils.http import GuardedClient, HttpError
 import maxminddb
 from maxminddb.errors import InvalidDatabaseError
 
+from foca_plugins.tes.routing.distance.cache import TtlCache
+
+Place = tuple[str, str, str]
+"""City, region (may be empty) and country code of an address."""
+
 
 class LookupFailed(Exception):
-    """A lookup failed, e.g., as a service is unavailable; not a miss."""
+    """A lookup failed, e.g., as a service is unavailable; not a miss.
+
+    Attributes:
+        status: HTTP status of the response that failed the lookup, if any.
+    """
+
+    def __init__(self, message: str, status: int | None = None) -> None:
+        """Create the error.
+
+        Args:
+            message: Message, without addresses.
+            status: HTTP status of the response, if any.
+        """
+        super().__init__(message)
+        self.status = status
 
 
 class Provider(Protocol):
@@ -88,7 +107,8 @@ class OfflineProvider:
 
     Works with DB-IP's "IP to City Lite" database and other databases with
     GeoIP2-City-style records (`location.latitude`, `location.longitude`).
-    The reader is safe for concurrent use.
+    The reader is safe for concurrent use. Lookups after `close()` fail
+    (hooks that the engine abandoned may still run at shutdown).
     """
 
     def __init__(self, path: Path) -> None:
@@ -104,6 +124,7 @@ class OfflineProvider:
             self._reader = maxminddb.open_database(str(path))
         except InvalidDatabaseError as exc:
             raise ValueError(f"Not a valid GeoIP database: {path}") from exc
+        self._closed = False
 
     def locate(self, address: str, ctx: Context) -> Location | None:
         """Locate an address in the database.
@@ -114,10 +135,18 @@ class OfflineProvider:
 
         Returns:
             Location, or `None` if the database has none for the address.
+
+        Raises:
+            LookupFailed: The database is closed.
         """
+        if self._closed:
+            raise LookupFailed("The GeoIP database is closed")
         try:
             record = self._reader.get(address)
-        except ValueError:
+        except ValueError as exc:
+            # also raised by a reader closed during the lookup
+            if self._closed:
+                raise LookupFailed("The GeoIP database is closed") from exc
             return None
         if not isinstance(record, dict):
             return None
@@ -128,6 +157,7 @@ class OfflineProvider:
 
     def close(self) -> None:
         """Close the database."""
+        self._closed = True
         self._reader.close()
 
 
@@ -136,8 +166,12 @@ class DbipProvider:
 
     Nominatim's usage policy allows at most one request per second, from an
     application that identifies itself in its user agent: the requests of a
-    process wait for each other (`interval`), and wait no longer than the
-    call's deadline.
+    process take turns (`interval`), and none waits beyond the call's
+    deadline. A turn is booked before DB-IP is asked, so that no answer of
+    DB-IP is lost for lack of time. Places (by address) and coordinates (by
+    place) are cached; when DB-IP refuses lookups (an `error` answer, e.g.,
+    over its daily quota, or HTTP 429), the provider asks it nothing for
+    `backoff` seconds.
     """
 
     def __init__(
@@ -147,6 +181,9 @@ class DbipProvider:
         user_agent: str,
         interval: float,
         *,
+        backoff: float = 600,
+        cache_size: int = 10000,
+        cache_ttl: float = 86400,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -157,17 +194,27 @@ class DbipProvider:
             nominatim_url: Base URL of Nominatim, without trailing slash.
             user_agent: User agent of the requests.
             interval: Seconds between requests to Nominatim.
-            clock: Clock of the throttle, for tests.
+            backoff: Seconds to ask DB-IP nothing after it refused a lookup.
+            cache_size: Maximum number of cached places and of cached
+                coordinates; 0 caches none.
+            cache_ttl: Seconds to keep places and coordinates.
+            clock: Clock of the throttle, the back-off and the caches, for
+                tests.
             sleep: Wait function of the throttle, for tests.
         """
         self.dbip_url = dbip_url
         self.nominatim_url = nominatim_url
         self.headers = {"User-Agent": user_agent, "Accept": "application/json"}
         self.interval = interval
+        self.backoff = backoff
+        self.cache_ttl = cache_ttl
+        self._places: TtlCache[str, Place | None] = TtlCache(cache_size, clock)
+        self._searches: TtlCache[str, Location | None] = TtlCache(cache_size, clock)
         self._clock = clock
         self._sleep = sleep
         self._lock = threading.Lock()
         self._next = 0.0
+        self._blocked_until = 0.0
 
     def locate(self, address: str, ctx: Context) -> Location | None:
         """Locate an address: its place, then the place's coordinates.
@@ -181,43 +228,98 @@ class DbipProvider:
             address, or Nominatim no coordinates of the place.
 
         Raises:
-            LookupFailed: A service failed or answered invalidly, or the
-                rate limit of Nominatim leaves no time.
+            LookupFailed: A service failed or answered invalidly, DB-IP is
+                backed off, or the rate limit of Nominatim leaves no time.
             PluginError: The context has no HTTP client.
         """
         http = ctx.http
         if http is None:
             raise PluginError("Provider 'dbip' needs ctx.http")
-        place = self._get(http, f"{self.dbip_url}/{quote(address, safe='')}")
-        if not isinstance(place, dict) or "error" in place:
+        turn: float | None = None
+        cached, place = self._places.get(address)
+        if not cached:
+            if self._clock() < self._blocked_until:
+                raise LookupFailed("DB-IP refused lookups recently; backing off")
+            turn = self._book(ctx)
+            place = self._place(http, address)
+            self._places.put(address, place, self.cache_ttl)
+        if place is None:
+            return None
+        city, region, country = place
+        queries = [f"{city}, {country}"]
+        if region:
+            queries.insert(0, f"{city}, {region} {country}")
+        for query in queries:
+            cached, location = self._searches.get(query)
+            if not cached:
+                self._wait(self._book(ctx) if turn is None else turn)
+                turn = None
+                location = self._search(http, query)
+                self._searches.put(query, location, self.cache_ttl)
+            if location is not None:
+                return location
+        return None
+
+    def close(self) -> None:
+        """Release resources (none)."""
+
+    def _place(self, http: GuardedClient, address: str) -> Place | None:
+        """Ask DB-IP for the place of an address.
+
+        Args:
+            http: Guarded HTTP client of the call.
+            address: Public IP address.
+
+        Returns:
+            Place, or `None` if DB-IP knows no city and country.
+
+        Raises:
+            LookupFailed: DB-IP failed, refused the lookup (then the
+                provider backs off) or answered invalidly.
+        """
+        try:
+            body = self._get(http, f"{self.dbip_url}/{quote(address, safe='')}")
+        except LookupFailed as exc:
+            if exc.status == 429:
+                self._back_off()
+            raise
+        if isinstance(body, dict) and "error" in body:
+            self._back_off()
+            raise LookupFailed("DB-IP refused the lookup")
+        if not isinstance(body, dict):
             raise LookupFailed("DB-IP gave no place")
         city, region, country = (
-            str(place.get(key) or "").strip()
+            str(body.get(key) or "").strip()
             for key in ("city", "stateProv", "countryCode")
         )
         # `ZZ`: unknown country
         if not city or not country or country == "ZZ":
             return None
-        queries = [f"{city}, {country}"]
-        if region:
-            queries.insert(0, f"{city}, {region} {country}")
-        for query in queries:
-            self._throttle(ctx)
-            results = self._get(
-                http,
-                f"{self.nominatim_url}/search",
-                {"q": query, "format": "jsonv2", "limit": "1"},
-            )
-            if not isinstance(results, list):
-                raise LookupFailed("Nominatim answered invalidly")
-            if results and isinstance(results[0], dict):
-                location = coordinates(results[0].get("lat"), results[0].get("lon"))
-                if location is not None:
-                    return location
-        return None
+        return city, region, country
 
-    def close(self) -> None:
-        """Release resources (none)."""
+    def _search(self, http: GuardedClient, query: str) -> Location | None:
+        """Ask Nominatim for the coordinates of a place.
+
+        Args:
+            http: Guarded HTTP client of the call.
+            query: Free-form query of the place.
+
+        Returns:
+            Location of the first result, if valid.
+
+        Raises:
+            LookupFailed: Nominatim failed or answered invalidly.
+        """
+        results = self._get(
+            http,
+            f"{self.nominatim_url}/search",
+            {"q": query, "format": "jsonv2", "limit": "1"},
+        )
+        if not isinstance(results, list):
+            raise LookupFailed("Nominatim answered invalidly")
+        if results and isinstance(results[0], dict):
+            return coordinates(results[0].get("lat"), results[0].get("lon"))
+        return None
 
     def _get(
         self, http: GuardedClient, url: str, params: dict[str, str] | None = None
@@ -243,92 +345,45 @@ class DbipProvider:
         except HttpError as exc:
             raise LookupFailed(f"Request failed: {exc.reason}") from exc
         if response.status != 200:
-            raise LookupFailed(f"Request failed: HTTP {response.status}")
+            raise LookupFailed(
+                f"Request failed: HTTP {response.status}", status=response.status
+            )
         try:
             return response.json()
         except ValueError as exc:
             raise LookupFailed("Response is no JSON") from exc
 
-    def _throttle(self, ctx: Context) -> None:
-        """Wait for the next slot for a request to Nominatim.
+    def _back_off(self) -> None:
+        """Ask DB-IP nothing for `backoff` seconds."""
+        with self._lock:
+            self._blocked_until = self._clock() + self.backoff
+
+    def _book(self, ctx: Context) -> float:
+        """Book the next turn for a request to Nominatim.
 
         Args:
             ctx: Context of the call (deadline).
 
-        Raises:
-            LookupFailed: The wait would pass the deadline.
-        """
-        with self._lock:
-            wait = self._next - self._clock()
-            if wait > ctx.remaining():
-                raise LookupFailed("Nominatim's rate limit leaves no time")
-            if wait > 0:
-                self._sleep(wait)
-            self._next = self._clock() + self.interval
-
-
-class LocationCache:
-    """Cache of looked-up locations by address, with TTLs and a size limit.
-
-    Locations and misses (`None`) have TTLs of their own; beyond its size,
-    the entry used least recently goes. Safe for concurrent use.
-    """
-
-    def __init__(
-        self,
-        size: int,
-        ttl: float,
-        miss_ttl: float,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        """Create the cache.
-
-        Args:
-            size: Maximum number of entries; 0 turns the cache off.
-            ttl: Seconds to keep locations; 0 keeps none.
-            miss_ttl: Seconds to keep misses; 0 keeps none.
-            clock: Clock, for tests.
-        """
-        self.size = size
-        self.ttl = ttl
-        self.miss_ttl = miss_ttl
-        self._clock = clock
-        self._entries: OrderedDict[str, tuple[float, Location | None]] = OrderedDict()
-        self._lock = threading.Lock()
-
-    def get(self, address: str) -> tuple[bool, Location | None]:
-        """Get the cached location of an address.
-
-        Args:
-            address: IP address.
-
         Returns:
-            Whether the address is cached (and not expired), and its
-            location (`None` for a cached miss).
+            Time of the turn (of `clock`).
+
+        Raises:
+            LookupFailed: The turn would come after the deadline.
         """
         with self._lock:
-            entry = self._entries.get(address)
-            if entry is None:
-                return False, None
-            expires, location = entry
-            if expires <= self._clock():
-                del self._entries[address]
-                return False, None
-            self._entries.move_to_end(address)
-            return True, location
+            now = self._clock()
+            turn = max(now, self._next)
+            if turn - now > ctx.remaining():
+                raise LookupFailed("Nominatim's rate limit leaves no time")
+            self._next = turn + self.interval
+            return turn
 
-    def put(self, address: str, location: Location | None) -> None:
-        """Cache the location of an address, or a miss.
+    def _wait(self, turn: float) -> None:
+        """Wait for a booked turn, without holding the lock.
 
         Args:
-            address: IP address.
-            location: Location, or `None` for a miss.
+            turn: Time of the turn (of `clock`).
         """
-        ttl = self.miss_ttl if location is None else self.ttl
-        if self.size <= 0 or ttl <= 0:
-            return
-        with self._lock:
-            self._entries[address] = (self._clock() + ttl, location)
-            self._entries.move_to_end(address)
-            while len(self._entries) > self.size:
-                self._entries.popitem(last=False)
+        wait = turn - self._clock()
+        if wait > 0:
+            self._sleep(wait)

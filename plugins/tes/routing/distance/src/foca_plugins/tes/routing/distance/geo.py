@@ -1,17 +1,23 @@
 """Geographic helpers: distances, input URLs and host addresses.
 
-Plain functions without state, used by the plugin and its providers.
+Plain functions, and the resolver of host names, used by the plugin and its
+providers.
 """
 
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 import ipaddress
 import math
 import socket
 import threading
+import time
 from typing import Any
 from urllib.parse import urlsplit
 
 from foca.plugins import Location
 from foca.utils.http import is_public_address
+
+from foca_plugins.tes.routing.distance.cache import TtlCache
 
 EARTH_RADIUS_KM = 6371.0088
 """Mean radius of the Earth (IUGG), in kilometres."""
@@ -77,56 +83,164 @@ def url_host(url: str) -> str | None:
     return host.rstrip(".") or None if host else None
 
 
-def resolve(host: str, timeout: float) -> list[str]:
-    """Resolve a host name with the system resolver, within a time limit.
-
-    The resolver cannot be interrupted, so it runs in a daemon thread that
-    is abandoned when the time is up (as FOCA's guarded HTTP client does).
-
-    Args:
-        host: Host name.
-        timeout: Seconds for the resolution.
-
-    Returns:
-        Addresses, in the resolver's order, without duplicates; none if the
-        host can't be resolved in time.
-    """
-    outcome: dict[str, list[Any]] = {}
-    done = threading.Event()
-
-    def lookup() -> None:
-        try:
-            outcome["infos"] = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-        except (OSError, UnicodeError):
-            outcome["infos"] = []
-        finally:
-            done.set()
-
-    threading.Thread(target=lookup, name="distance-resolve", daemon=True).start()
-    if not done.wait(max(timeout, 0)):
-        return []
-    return list(dict.fromkeys(str(info[4][0]) for info in outcome["infos"]))
-
-
-def public_address(host: str, timeout: float) -> str | None:
-    """Get the public address of a host, to look up its location.
+def literal_address(host: str) -> str | None:
+    """Get the IP address that a host is, if it is one.
 
     Args:
         host: Host name or IP address.
-        timeout: Seconds to resolve a host name.
 
     Returns:
-        The host itself if it is a public IP address, or else the first
-        public address that the host name resolves to; `None` if there is
-        none (e.g., private addresses, unknown hosts), as only public
-        addresses have meaningful locations, and only they may be sent to
-        online providers.
+        The address, normalized; `None` for host names.
     """
     try:
-        candidates = [str(ipaddress.ip_address(host))]
+        return str(ipaddress.ip_address(host))
     except ValueError:
-        candidates = resolve(host, timeout)
-    for address in candidates:
-        if is_public_address(ipaddress.ip_address(address)):
-            return address
+        return None
+
+
+def public_address(addresses: Iterable[str]) -> str | None:
+    """Get the first public address, to look up its location.
+
+    Only public addresses have meaningful locations, and only they may be
+    sent to online providers.
+
+    Args:
+        addresses: IP addresses; invalid ones are skipped.
+
+    Returns:
+        The first public address; `None` if there is none.
+    """
+    for address in addresses:
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError:
+            continue
+        if is_public_address(ip):
+            return str(ip)
     return None
+
+
+@dataclass
+class _Job:
+    """Resolution of a host name in a thread of its own.
+
+    Attributes:
+        host: Host name.
+        done: Set when the resolution is over.
+        addresses: Addresses, once done.
+    """
+
+    host: str
+    done: threading.Event = field(default_factory=threading.Event)
+    addresses: tuple[str, ...] = ()
+
+
+class Resolver:
+    """Resolves host names with the system resolver, bounded in time and threads.
+
+    The system resolver can't be interrupted, so each name is resolved in a
+    daemon thread, which callers abandon at their deadline (as FOCA's
+    guarded HTTP client does). To keep slow or hostile name servers from
+    piling up threads, a process runs at most `threads` resolutions at a
+    time and at most one per name; names beyond that stay unresolved.
+    Results, also failures, are cached for `ttl`, so that a name is not
+    resolved again on every request.
+    """
+
+    def __init__(
+        self,
+        threads: int,
+        ttl: float,
+        cache_size: int,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        """Create the resolver.
+
+        Args:
+            threads: Maximum number of resolutions at a time.
+            ttl: Seconds to keep results; 0 keeps none.
+            cache_size: Maximum number of cached names; 0 caches none.
+            clock: Clock of the cache, for tests.
+        """
+        self.ttl = ttl
+        self.cache: TtlCache[str, tuple[str, ...]] = TtlCache(cache_size, clock)
+        self._slots = threading.BoundedSemaphore(threads)
+        self._lock = threading.Lock()
+        self._pending: set[str] = set()
+
+    def resolve(
+        self, hosts: Iterable[str], deadline: float
+    ) -> dict[str, tuple[str, ...]]:
+        """Resolve host names in parallel, until a deadline.
+
+        Args:
+            hosts: Host names.
+            deadline: Deadline, in `time.monotonic()` seconds; no
+                resolution starts after it.
+
+        Returns:
+            Addresses of the names that were cached or resolved in time, in
+            the resolver's order, without duplicates (none for names that
+            can't be resolved); other names are left out.
+        """
+        results: dict[str, tuple[str, ...]] = {}
+        jobs: list[_Job] = []
+        for host in dict.fromkeys(hosts):
+            cached, addresses = self.cache.get(host)
+            if cached:
+                results[host] = addresses or ()
+            elif time.monotonic() < deadline and (job := self._start(host)):
+                jobs.append(job)
+        for job in jobs:
+            if job.done.wait(max(deadline - time.monotonic(), 0)):
+                results[job.host] = job.addresses
+        return results
+
+    def _start(self, host: str) -> _Job | None:
+        """Start resolving a name, if a thread is free and none resolves it.
+
+        Args:
+            host: Host name.
+
+        Returns:
+            The job, or `None` if it was not started.
+        """
+        with self._lock:
+            if host in self._pending or not self._slots.acquire(blocking=False):
+                return None
+            self._pending.add(host)
+        job = _Job(host)
+        try:
+            threading.Thread(
+                target=self._run, args=(job,), name="distance-resolve", daemon=True
+            ).start()
+        except RuntimeError:  # no more threads
+            self._release(host)
+            return None
+        return job
+
+    def _run(self, job: _Job) -> None:
+        """Resolve a name and cache the result (in the job's thread).
+
+        Args:
+            job: Job.
+        """
+        try:
+            infos = socket.getaddrinfo(job.host, None, type=socket.SOCK_STREAM)
+            job.addresses = tuple(dict.fromkeys(str(info[4][0]) for info in infos))
+        except (OSError, UnicodeError):
+            job.addresses = ()
+        finally:
+            self.cache.put(job.host, job.addresses, self.ttl)
+            self._release(job.host)
+            job.done.set()
+
+    def _release(self, host: str) -> None:
+        """Free the thread slot of a name.
+
+        Args:
+            host: Host name.
+        """
+        with self._lock:
+            self._pending.discard(host)
+            self._slots.release()

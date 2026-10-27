@@ -1,7 +1,9 @@
 """Tests of the geographic helpers of `tes.routing.distance`."""
 
+from collections.abc import Iterator
 import socket
 import threading
+import time
 from typing import Any
 
 from foca.plugins import Location
@@ -9,10 +11,11 @@ import pytest
 
 from foca_plugins.tes.routing.distance import geo
 from foca_plugins.tes.routing.distance.geo import (
+    Resolver,
     distance_km,
     input_urls,
+    literal_address,
     public_address,
-    resolve,
     url_host,
 )
 
@@ -101,7 +104,55 @@ def test_url_host(url: str, host: str | None) -> None:
     assert url_host(url) == host
 
 
-def test_resolve_returns_addresses_once(monkeypatch: pytest.MonkeyPatch) -> None:
+def make_resolver(threads: int = 4, ttl: float = 60) -> Resolver:
+    """Create a resolver.
+
+    Args:
+        threads: Maximum number of resolutions at a time.
+        ttl: Seconds to keep results.
+
+    Returns:
+        Resolver.
+    """
+    return Resolver(threads=threads, ttl=ttl, cache_size=100)
+
+
+def soon(seconds: float = 2) -> float:
+    """Get a deadline.
+
+    Args:
+        seconds: Seconds from now.
+
+    Returns:
+        Deadline, in `time.monotonic()` seconds.
+    """
+    return time.monotonic() + seconds
+
+
+@pytest.fixture
+def hang(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """Make the system resolver hang until the test ends.
+
+    Args:
+        monkeypatch: Pytest fixture.
+
+    Yields:
+        Names passed to the resolver, in order.
+    """
+    release = threading.Event()
+    asked: list[str] = []
+
+    def getaddrinfo(host: str, *args: Any, **kwargs: Any) -> Any:
+        asked.append(host)
+        release.wait(5)
+        return addrinfo("9.9.9.9")
+
+    monkeypatch.setattr(geo.socket, "getaddrinfo", getaddrinfo)
+    yield asked
+    release.set()
+
+
+def test_resolver_returns_addresses_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """Addresses come in the resolver's order, without duplicates.
 
     Args:
@@ -112,81 +163,162 @@ def test_resolve_returns_addresses_once(monkeypatch: pytest.MonkeyPatch) -> None
         "getaddrinfo",
         lambda *args, **kwargs: addrinfo("9.9.9.9", "1.1.1.1", "9.9.9.9"),
     )
-    assert resolve("data.example.org", 1) == ["9.9.9.9", "1.1.1.1"]
+    assert make_resolver().resolve(["data.example.org"], soon()) == {
+        "data.example.org": ("9.9.9.9", "1.1.1.1")
+    }
 
 
 @pytest.mark.parametrize("error", [OSError("nope"), UnicodeError("bad")])
-def test_resolve_failures_give_no_addresses(
+def test_resolver_failures_give_no_addresses(
     monkeypatch: pytest.MonkeyPatch, error: Exception
 ) -> None:
-    """Hosts that can't be resolved have no addresses.
+    """Hosts that can't be resolved have no addresses; that is cached too.
 
     Args:
         monkeypatch: Pytest fixture.
         error: Error of the resolver.
     """
+    asked: list[str] = []
 
-    def fail(*args: Any, **kwargs: Any) -> Any:
+    def fail(host: str, *args: Any, **kwargs: Any) -> Any:
+        asked.append(host)
         raise error
 
     monkeypatch.setattr(geo.socket, "getaddrinfo", fail)
-    assert resolve("data.example.org", 1) == []
+    resolver = make_resolver()
+    assert resolver.resolve(["bad.example.org"], soon()) == {"bad.example.org": ()}
+    assert resolver.resolve(["bad.example.org"], soon()) == {"bad.example.org": ()}
+    assert asked == ["bad.example.org"]
 
 
-def test_resolve_gives_up_at_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A resolver that takes too long is abandoned.
+def test_resolver_resolves_in_parallel(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Names are resolved at the same time, not one after another.
 
     Args:
         monkeypatch: Pytest fixture.
     """
-    release = threading.Event()
+    barrier = threading.Barrier(3, timeout=2)
 
-    def hang(*args: Any, **kwargs: Any) -> Any:
-        release.wait(5)
+    def getaddrinfo(host: str, *args: Any, **kwargs: Any) -> Any:
+        barrier.wait()  # breaks unless all three run at once
         return addrinfo("9.9.9.9")
 
-    monkeypatch.setattr(geo.socket, "getaddrinfo", hang)
-    try:
-        assert resolve("slow.example.org", 0.05) == []
-        assert resolve("slow.example.org", -1) == []
-    finally:
-        release.set()
+    monkeypatch.setattr(geo.socket, "getaddrinfo", getaddrinfo)
+    names = ["a.example.org", "b.example.org", "c.example.org"]
+    assert make_resolver().resolve(names, soon()) == dict.fromkeys(names, ("9.9.9.9",))
 
 
-def test_public_address_of_literals() -> None:
-    """IP literals are used as they are, if public; no resolver involved."""
-    assert public_address("9.9.9.9", 1) == "9.9.9.9"
-    assert public_address("2001:4860::1", 1) == "2001:4860::1"
-    assert public_address("10.0.0.1", 1) is None
-    assert public_address("::1", 1) is None
+def test_resolver_caches_until_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Results are cached for the TTL; a TTL of 0 caches nothing.
+
+    Args:
+        monkeypatch: Pytest fixture.
+    """
+    asked: list[str] = []
+
+    def getaddrinfo(host: str, *args: Any, **kwargs: Any) -> Any:
+        asked.append(host)
+        return addrinfo("9.9.9.9")
+
+    monkeypatch.setattr(geo.socket, "getaddrinfo", getaddrinfo)
+    now = [1000.0]
+    resolver = Resolver(threads=2, ttl=60, cache_size=10, clock=lambda: now[0])
+    resolver.resolve(["c.example.org"], soon())
+    resolver.resolve(["c.example.org"], soon())
+    assert asked == ["c.example.org"]
+    now[0] += 61
+    resolver.resolve(["c.example.org"], soon())
+    assert asked == ["c.example.org"] * 2
+    uncached = make_resolver(ttl=0)
+    uncached.resolve(["u.example.org"], soon())
+    uncached.resolve(["u.example.org"], soon())
+    assert asked[2:] == ["u.example.org"] * 2
+
+
+def test_resolver_gives_up_at_deadline(hang: list[str]) -> None:
+    """Names not resolved by the deadline are left out, all within it.
+
+    Args:
+        hang: Names passed to the hanging resolver.
+    """
+    resolver = make_resolver(threads=8)
+    names = [f"h{i}.example.org" for i in range(5)]
+    started = time.monotonic()
+    assert resolver.resolve(names, soon(0.2)) == {}
+    # in parallel: one deadline for all names, not one per name
+    assert time.monotonic() - started < 1
+    assert sorted(hang) == names
+
+
+def test_resolver_starts_nothing_after_deadline(hang: list[str]) -> None:
+    """No resolution starts once the deadline has passed.
+
+    Args:
+        hang: Names passed to the hanging resolver.
+    """
+    before = threading.active_count()
+    assert make_resolver().resolve(["late.example.org"], soon(-1)) == {}
+    assert hang == []
+    assert threading.active_count() == before
+
+
+def test_resolver_bounds_threads(hang: list[str]) -> None:
+    """At most `threads` names are resolved at a time, each name once.
+
+    Args:
+        hang: Names passed to the hanging resolver.
+    """
+    resolver = make_resolver(threads=2)
+    names = [f"h{i}.example.org" for i in range(5)]
+    assert resolver.resolve(names, soon(0.05)) == {}
+    assert resolver.resolve(names, soon(0.05)) == {}
+    # two threads hang; the other names, and the hanging ones again, wait
+    assert hang == names[:2]
+
+
+def test_resolver_survives_thread_limits(
+    hang: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If no thread can be started, the name stays unresolved; slots free.
+
+    Args:
+        hang: Names passed to the hanging resolver.
+        monkeypatch: Pytest fixture.
+    """
+
+    def refuse(self: threading.Thread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    resolver = make_resolver(threads=1)
+    with monkeypatch.context() as patch:
+        patch.setattr(threading.Thread, "start", refuse)
+        assert resolver.resolve(["a.example.org"], soon(0.05)) == {}
+    # the slot was freed: the next name gets a thread
+    assert resolver.resolve(["b.example.org"], soon(0.05)) == {}
+    assert hang == ["b.example.org"]
+
+
+def test_literal_address() -> None:
+    """IP literals are normalized; names are no literals."""
+    assert literal_address("9.9.9.9") == "9.9.9.9"
+    assert literal_address("2001:4860:0::1") == "2001:4860::1"
+    assert literal_address("data.example.org") is None
 
 
 @pytest.mark.parametrize(
     ("addresses", "expected"),
     [
         (["10.0.0.1", "9.9.9.9", "1.1.1.1"], "9.9.9.9"),
-        (["10.0.0.1", "127.0.0.1"], None),
+        (["bogus", "fe80::1%eth0", "2001:4860::1"], "2001:4860::1"),
+        (["::ffff:10.0.0.1", "10.0.0.1", "127.0.0.1", "::1"], None),
         ([], None),
     ],
 )
-def test_public_address_of_names(
-    monkeypatch: pytest.MonkeyPatch, addresses: list[str], expected: str | None
-) -> None:
-    """Host names give their first public address, if any.
+def test_public_address(addresses: list[str], expected: str | None) -> None:
+    """The first public address is used; private and invalid ones aren't.
 
     Args:
-        monkeypatch: Pytest fixture.
-        addresses: Addresses of the host.
+        addresses: Addresses of a host.
         expected: Address used.
     """
-    if addresses:
-        monkeypatch.setattr(
-            geo.socket, "getaddrinfo", lambda *a, **k: addrinfo(*addresses)
-        )
-    else:
-
-        def fail(*args: Any, **kwargs: Any) -> Any:
-            raise OSError("unknown host")
-
-        monkeypatch.setattr(geo.socket, "getaddrinfo", fail)
-    assert public_address("data.example.org", 1) == expected
+    assert public_address(addresses) == expected

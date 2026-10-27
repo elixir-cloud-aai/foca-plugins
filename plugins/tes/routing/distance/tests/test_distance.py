@@ -12,6 +12,7 @@ from collections.abc import Iterator, Sequence
 from importlib.metadata import entry_points
 from pathlib import Path
 import socket
+import threading
 import time
 from typing import Any
 from unittest.mock import MagicMock
@@ -70,11 +71,12 @@ def backend(name: str, host: str, location: Location | None = None) -> Backend:
     return make_backend(name, f"https://{host}/ga4gh/tes/v1", location=location)
 
 
-def make_context(task: Any) -> Context:
+def make_context(task: Any, seconds: float = 10) -> Context:
     """Build the context of a hook call.
 
     Args:
         task: Task, as submitted (`ctx.original`).
+        seconds: Seconds until the deadline.
 
     Returns:
         Context, without HTTP client.
@@ -85,7 +87,7 @@ def make_context(task: Any) -> Context:
         principal=Principal(subject="alice"),
         params=EmptyModel(),
         original=task,
-        deadline=time.monotonic() + 10,
+        deadline=time.monotonic() + seconds,
         state={},
         request_id="r1",
     )
@@ -187,6 +189,10 @@ def test_config_defaults(database: Path) -> None:
     assert config.dbip_url == "https://api.db-ip.com/v2/free"
     assert config.nominatim_url == "https://nominatim.openstreetmap.org"
     assert config.user_agent == "foca-plugin-tes-routing-distance"
+    assert config.resolve_timeout == 2
+    assert config.resolve_threads == 16
+    assert config.dbip_max_lookups == 5
+    assert config.cache_failure_ttl == 60
 
 
 @pytest.mark.parametrize(
@@ -198,6 +204,11 @@ def test_config_defaults(database: Path) -> None:
         {"provider": "dbip", "dbip_url": "http://api.db-ip.com/v2/free"},
         {"provider": "dbip", "nominatim_url": "ftp://nominatim.example.org"},
         {"provider": "dbip", "user_agent": ""},
+        {"provider": "dbip", "user_agent": " gw/1"},
+        {"provider": "dbip", "user_agent": "gw/1\r\nX-Evil: 1"},
+        {"provider": "dbip", "user_agent": "gw/1\u00e9"},
+        {"provider": "dbip", "resolve_threads": 0},
+        {"provider": "dbip", "dbip_max_lookups": 0},
         {"provider": "dbip", "max_hosts": 0},
         {"provider": "dbip", "cache_ttl": -1},
         {"provider": "dbip", "other": "value"},
@@ -246,6 +257,7 @@ def test_on_route_ranks_by_distance(
         "lookups": 4,
         "cache_hits": 0,
         "failed_lookups": 0,
+        "skipped_lookups": 0,
     }
 
 
@@ -473,6 +485,7 @@ def test_lookups_are_cached(
         world: Backends.
         addresses: Addresses in the networks of the test database.
     """
+    # 2 inputs (one in Zurich, one unknown: a miss) and 3 backends
     task = make_task(addresses["zurich"], "4.4.4.4")
     first = make_context(task)
     plugin.on_route(world, first)
@@ -485,13 +498,13 @@ def test_lookups_are_cached(
     )
 
 
-def test_failed_lookups_are_not_cached(
+def test_failed_lookups_are_cached_briefly(
     plugin: Distance,
     world: list[Backend],
     addresses: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A failing provider leaves the address unlocated, and uncached.
+    """A failing lookup leaves the address unlocated for `cache_failure_ttl`.
 
     Args:
         plugin: Plugin.
@@ -501,6 +514,7 @@ def test_failed_lookups_are_not_cached(
     """
     provider = plugin.provider
     real = provider.locate
+    failed: list[str] = []
 
     def flaky(address: str, ctx: Context) -> Location | None:
         """Fail for the address in Sydney.
@@ -516,15 +530,218 @@ def test_failed_lookups_are_not_cached(
             LookupFailed: For the address in Sydney.
         """
         if address == addresses["sydney"]:
+            failed.append(address)
             raise LookupFailed("unavailable")
         return real(address, ctx)
 
+    now = [1000.0]
+    monkeypatch.setattr(plugin.cache, "_clock", lambda: now[0])
     monkeypatch.setattr(provider, "locate", flaky)
-    ctx = make_context(make_task(addresses["zurich"]))
+    task = make_task(addresses["zurich"])
+    ctx = make_context(task)
     assert ids(plugin.on_route(world, ctx)) == ["helsinki", "mountain_view", "sydney"]
     assert ctx.annotations["located_backends"] == 2
     assert ctx.annotations["failed_lookups"] == 1
-    assert plugin.cache.get(addresses["sydney"]) == (False, None)
+    plugin.on_route(world, make_context(task))
+    assert len(failed) == 1
+    now[0] += 61
+    plugin.on_route(world, make_context(task))
+    assert len(failed) == 2
+
+
+def test_misses_expire(
+    plugin: Distance,
+    world: list[Backend],
+    addresses: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Addresses without location are kept for `cache_miss_ttl`, located ones longer.
+
+    Args:
+        plugin: Plugin.
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+        monkeypatch: Pytest fixture.
+    """
+    now = [1000.0]
+    monkeypatch.setattr(plugin.cache, "_clock", lambda: now[0])
+    # one input in Zurich, one unknown (a miss); 3 backends
+    task = make_task(addresses["zurich"], "4.4.4.4")
+    plugin.on_route(world, make_context(task))
+    now[0] += 3601
+    ctx = make_context(task)
+    plugin.on_route(world, ctx)
+    # only the miss is looked up again
+    assert (ctx.annotations["lookups"], ctx.annotations["cache_hits"]) == (1, 4)
+    now[0] += 86400
+    ctx = make_context(task)
+    plugin.on_route(world, ctx)
+    assert (ctx.annotations["lookups"], ctx.annotations["cache_hits"]) == (5, 0)
+
+
+def test_cache_can_be_turned_off(
+    database: Path, world: list[Backend], addresses: dict[str, str]
+) -> None:
+    """With `cache_size: 0`, every call looks up every address.
+
+    Args:
+        database: Test database.
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+    """
+    plugin = Distance(PLUGIN_ID, DistanceConfig(database=database, cache_size=0))
+    try:
+        task = make_task(addresses["zurich"])
+        for _ in range(2):
+            ctx = make_context(task)
+            plugin.on_route(world, ctx)
+            assert (ctx.annotations["lookups"], ctx.annotations["cache_hits"]) == (
+                4,
+                0,
+            )
+    finally:
+        plugin.close()
+
+
+def test_private_addresses_never_reach_the_provider(
+    plugin: Distance, addresses: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Private, in-cluster and mapped private addresses aren't looked up.
+
+    Args:
+        plugin: Plugin.
+        addresses: Addresses in the networks of the test database.
+        monkeypatch: Pytest fixture.
+    """
+    asked: list[str] = []
+    real = plugin.provider.locate
+
+    def spy(address: str, ctx: Context) -> Location | None:
+        """Record the address, then look it up.
+
+        Args:
+            address: Address.
+            ctx: Context.
+
+        Returns:
+            Location, if any.
+        """
+        asked.append(address)
+        return real(address, ctx)
+
+    def getaddrinfo(host: str, *args: Any, **kwargs: Any) -> list[Any]:
+        """Resolve every name to private addresses only.
+
+        Args:
+            host: Host name.
+            args: Other arguments.
+            kwargs: Other keyword arguments.
+
+        Returns:
+            Address info.
+        """
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.1.2.3", 443)),
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("fd00::1", 443, 0, 0)),
+        ]
+
+    monkeypatch.setattr(plugin.provider, "locate", spy)
+    monkeypatch.setattr(geo.socket, "getaddrinfo", getaddrinfo)
+    task = make_task(
+        addresses["zurich"],
+        "10.0.0.7",
+        "[::ffff:10.0.0.8]",
+        "192.168.1.1",
+        "data.internal.example",
+    )
+    candidates = [
+        backend("private", "10.0.0.9"),
+        backend("svc", "tes.default.svc.cluster.local"),
+        backend("zurich", addresses["zurich"]),
+    ]
+    assert ids(plugin.on_route(candidates, make_context(task)))[0] == "zurich"
+    assert asked == [addresses["zurich"]]
+
+
+def test_slow_name_servers_dont_hold_the_call(
+    database: Path,
+    world: list[Backend],
+    addresses: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Names that hang cost one `resolve_timeout` per call, with bounded threads.
+
+    Args:
+        database: Test database.
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+        monkeypatch: Pytest fixture.
+    """
+    release = threading.Event()
+    asked: list[str] = []
+
+    def hang(host: str, *args: Any, **kwargs: Any) -> Any:
+        """Never answer (until the test ends).
+
+        Args:
+            host: Host name.
+            args: Other arguments.
+            kwargs: Other keyword arguments.
+
+        Returns:
+            Nothing in time.
+        """
+        asked.append(host)
+        release.wait(10)
+        return []
+
+    monkeypatch.setattr(geo.socket, "getaddrinfo", hang)
+    plugin = Distance(
+        PLUGIN_ID,
+        DistanceConfig(database=database, resolve_timeout=0.2, resolve_threads=4),
+    )
+    names = [f"h{i}.slow.example" for i in range(20)]
+    task = make_task(addresses["zurich"], *names)
+    before = threading.active_count()
+    try:
+        started = time.monotonic()
+        ctx = make_context(task)
+        assert ids(plugin.on_route(world, ctx))[0] == "helsinki"
+        assert time.monotonic() - started < 1
+        # again: the hanging names are neither resolved again nor waited for
+        plugin.on_route(world, make_context(task))
+        assert time.monotonic() - started < 2
+        assert len(asked) == 4
+        assert threading.active_count() - before <= 4
+    finally:
+        release.set()
+        plugin.close()
+
+
+def test_no_resolution_after_deadline(
+    plugin: Distance,
+    world: list[Backend],
+    addresses: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once the call's time is up, no name is resolved and nothing looked up.
+
+    Args:
+        plugin: Plugin.
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+        monkeypatch: Pytest fixture.
+    """
+    asked: list[str] = []
+    monkeypatch.setattr(
+        geo.socket, "getaddrinfo", lambda host, *a, **k: asked.append(host)
+    )
+    ctx = make_context(make_task(addresses["zurich"], "data.example.org"), -1)
+    with pytest.raises(NotApplicable, match="No input"):
+        plugin.on_route(world, ctx)
+    assert asked == []
+    assert ctx.annotations["skipped_lookups"] == 1
+    assert ctx.annotations["lookups"] == 0
 
 
 def test_setup_is_idempotent(database: Path) -> None:
@@ -540,6 +757,32 @@ def test_setup_is_idempotent(database: Path) -> None:
     second = plugin.provider = MagicMock(wraps=plugin.provider)
     plugin.close()
     second.close.assert_called_once()
+    # the provider stays: hooks still running at shutdown fail cleanly
+    assert plugin.provider is second
+
+
+def test_setup_refuses_offline_without_database() -> None:
+    """Settings that bypassed validation can't set up the offline provider."""
+    config = DistanceConfig.model_construct(provider="offline", database=None)
+    with pytest.raises(ValueError, match="needs 'database'"):
+        Distance(PLUGIN_ID, config)
+
+
+def test_lookups_after_close_fail(
+    plugin: Distance, world: list[Backend], addresses: dict[str, str]
+) -> None:
+    """Hooks that run after `close()` fail their lookups, without errors.
+
+    Args:
+        plugin: Plugin.
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+    """
+    plugin.close()
+    ctx = make_context(make_task(addresses["zurich"]))
+    with pytest.raises(NotApplicable, match="No input"):
+        plugin.on_route(world, ctx)
+    assert ctx.annotations["failed_lookups"] == 1
 
 
 def test_online_provider_through_engine(
@@ -551,6 +794,58 @@ def test_online_provider_through_engine(
         world: Backends.
         addresses: Addresses in the networks of the test database.
         places: Places of the networks.
+    """
+    http = dbip_http(addresses, places)
+    harness = PluginHarness(
+        Distance,
+        config={"provider": "dbip", "nominatim_interval": 0, "user_agent": "gw/1"},
+        plugin_id=PLUGIN_ID,
+        http=http,
+    )
+    routed = harness.run_route(world, make_inbound(make_task(addresses["zurich"])))
+    assert ids(routed) == ["helsinki", "mountain_view", "sydney"]
+    assert [e.outcome for e in harness.executions] == ["ok"]
+    assert len(http.calls) == 8
+    assert {(call.headers or {}).get("User-Agent") for call in http.calls} == {"gw/1"}
+    # the second task with inputs in Zurich: all from the caches
+    harness.run_route(world, make_inbound(make_task(addresses["zurich"])))
+    assert len(http.calls) == 8
+    assert harness.executions[0].annotations["cache_hits"] == 4
+
+
+def test_online_lookups_are_capped_per_call(
+    world: list[Backend], addresses: dict[str, str], places: dict[str, Location]
+) -> None:
+    """With `provider: dbip`, a call looks up at most `dbip_max_lookups` addresses.
+
+    Args:
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+        places: Places of the networks.
+    """
+    http = dbip_http(addresses, places)
+    harness = PluginHarness(
+        Distance,
+        config={"provider": "dbip", "nominatim_interval": 0, "dbip_max_lookups": 2},
+        plugin_id=PLUGIN_ID,
+        http=http,
+    )
+    harness.run_route(world, make_inbound(make_task(addresses["zurich"])))
+    (execution,) = harness.executions
+    assert execution.annotations["lookups"] == 2
+    assert execution.annotations["skipped_lookups"] == 2
+    assert len(http.calls) == 4
+
+
+def dbip_http(addresses: dict[str, str], places: dict[str, Location]) -> FakeHttp:
+    """Build answers of DB-IP and Nominatim for the test networks.
+
+    Args:
+        addresses: Addresses in the networks of the test database.
+        places: Places of the networks.
+
+    Returns:
+        Fake HTTP client.
     """
     http = FakeHttp()
     for name, address in addresses.items():
@@ -573,17 +868,7 @@ def test_online_provider_through_engine(
         http.add(
             "GET", url, json=[{"lat": location.latitude, "lon": location.longitude}]
         )
-    harness = PluginHarness(
-        Distance,
-        config={"provider": "dbip", "nominatim_interval": 0, "user_agent": "gw/1"},
-        plugin_id=PLUGIN_ID,
-        http=http,
-    )
-    routed = harness.run_route(world, make_inbound(make_task(addresses["zurich"])))
-    assert ids(routed) == ["helsinki", "mountain_view", "sydney"]
-    assert [e.outcome for e in harness.executions] == ["ok"]
-    assert len(http.calls) == 8
-    assert {(call.headers or {}).get("User-Agent") for call in http.calls} == {"gw/1"}
+    return http
 
 
 def test_not_applicable_through_engine(database: Path, world: list[Backend]) -> None:

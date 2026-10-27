@@ -30,8 +30,9 @@ repositories work the same way.
 
 <!-- --8<-- [start:status] -->
 **Status:** the plugin API is new in FOCA 0.18.0; no plugins have been
-released yet. Plugins so far: `generic.routing.random`, plus the example
-`generic.example.noop`, the template of new plugins.
+released yet. Plugins so far: `generic.routing.random` and
+`tes.routing.distance`, plus the example `generic.example.noop`, the
+template of new plugins.
 <!-- --8<-- [end:status] -->
 
 **Read the [documentation][docs]** for installing plugins, writing them,
