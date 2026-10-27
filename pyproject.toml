@@ -24,6 +24,8 @@ build-constraint-dependencies = ["setuptools==84.2.1"]
 dev = [
     "ast-grep-cli>=0.51",
     "coverage>=7.16",
+    # Writes the GeoIP database fixtures of `tes.routing.distance`'s tests
+    "mmdb-writer>=0.2.7",
     "mypy>=2.4",
     "pip-audit>=2.10",
     "pre-commit>=4.6",
