@@ -1019,3 +1019,65 @@ def test_input_names_cant_hold_up_backends(
     finally:
         release.set()
         plugin.close()
+
+
+def test_failures_dont_replace_locations(
+    plugin: Distance,
+    world: list[Backend],
+    addresses: dict[str, str],
+    places: dict[str, Location],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed lookup keeps a location that a concurrent call found.
+
+    Args:
+        plugin: Plugin.
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+        places: Places of the networks.
+        monkeypatch: Pytest fixture.
+    """
+    sydney = addresses["sydney"]
+    real = plugin.provider.locate
+
+    def raced(address: str, ctx: Context) -> Location | None:
+        """Fail for Sydney after a concurrent call located it.
+
+        Args:
+            address: Address.
+            ctx: Context.
+
+        Returns:
+            Location, if any.
+
+        Raises:
+            LookupFailed: For the address in Sydney.
+        """
+        if address == sydney:
+            plugin.cache.put(sydney, places["sydney"], 100)
+            raise LookupFailed("unavailable")
+        return real(address, ctx)
+
+    monkeypatch.setattr(plugin.provider, "locate", raced)
+    plugin.on_route(world, make_context(make_task(addresses["zurich"])))
+    assert plugin.cache.get(sydney) == (True, places["sydney"])
+
+
+def test_bucket_inputs_are_not_located(
+    plugin: Distance, world: list[Backend], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bucket names of `s3` or `gs` URLs aren't resolved as hosts.
+
+    Args:
+        plugin: Plugin.
+        world: Backends.
+        monkeypatch: Pytest fixture.
+    """
+    asked: list[str] = []
+    monkeypatch.setattr(
+        geo.socket, "getaddrinfo", lambda host, *a, **k: asked.append(host)
+    )
+    task = {"inputs": [{"url": "s3://data.example.org/key"}]}
+    with pytest.raises(NotApplicable, match="No input"):
+        plugin.on_route(world, make_context(task))
+    assert asked == []

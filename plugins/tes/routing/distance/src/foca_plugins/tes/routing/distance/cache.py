@@ -68,3 +68,22 @@ class TtlCache(Generic[K, V]):
             self._entries.move_to_end(key)
             while len(self._entries) > self.size:
                 self._entries.popitem(last=False)
+
+    def add(self, key: K, value: V, ttl: float) -> None:
+        """Cache a value unless the key is cached already (and not expired).
+
+        Args:
+            key: Key.
+            value: Value.
+            ttl: Seconds to keep the value; 0 keeps it not at all.
+        """
+        if self.size <= 0 or ttl <= 0:
+            return
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is not None and entry[0] > self._clock():
+                return
+            self._entries[key] = (self._clock() + ttl, value)
+            self._entries.move_to_end(key)
+            while len(self._entries) > self.size:
+                self._entries.popitem(last=False)

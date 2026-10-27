@@ -137,6 +137,7 @@ def make_dbip(
         ("x", 0, None),
         (None, 0, None),
         ([1], 0, None),
+        (10**400, 0, None),
     ],
 )
 def test_coordinates(latitude: Any, longitude: Any, expected: Location | None) -> None:
@@ -586,3 +587,66 @@ def test_cache_can_be_turned_off(size: int, ttl: int) -> None:
     cache: TtlCache[str, Location | None] = TtlCache(size=size)
     cache.put("9.9.9.9", Location(latitude=1, longitude=1), ttl)
     assert cache.get("9.9.9.9") == (False, None)
+
+
+def test_dbip_provider_fails_after_close() -> None:
+    """Lookups after `close()` fail, without requests."""
+    provider = make_dbip()
+    provider.close()
+    http = FakeHttp()
+    with pytest.raises(LookupFailed, match="closed"):
+        provider.locate(ADDRESS, make_context(http))
+    assert http.calls == []
+
+
+def test_dbip_provider_keeps_misses_for_miss_ttl() -> None:
+    """Addresses without place are asked for again after `miss_ttl`."""
+    clock = Clock()
+    provider = DbipProvider(
+        DBIP, NOMINATIM, AGENT, 0, cache_ttl=1000, miss_ttl=10, clock=clock
+    )
+    http = FakeHttp()
+    http.add("GET", f"{DBIP}/{ADDRESS}", json={"city": "", "countryCode": "CH"})
+    assert provider.locate(ADDRESS, make_context(http)) is None
+    assert provider.locate(ADDRESS, make_context(http)) is None
+    assert len(http.calls) == 1
+    clock.now += 11
+    provider.locate(ADDRESS, make_context(http))
+    assert len(http.calls) == 2
+
+
+def test_dbip_provider_keeps_turns_booked_later() -> None:
+    """An unused turn is given back only if no later turn was booked."""
+    clock = Clock()
+    provider = make_dbip(clock, interval=1)
+    first = provider._book(make_context(None))
+    second = provider._book(make_context(None))
+    provider._give_back(first)
+    # the second turn stays booked: the next one comes after it
+    assert provider._book(make_context(None)) == second + 1
+    provider._give_back(second + 1)
+    assert provider._book(make_context(None)) == second + 1
+
+
+def test_cache_add_keeps_unexpired_entries() -> None:
+    """`add()` caches only keys that aren't cached, or have expired."""
+    clock = Clock()
+    cache: TtlCache[str, Location | None] = TtlCache(size=10, clock=clock)
+    here = Location(latitude=1, longitude=2)
+    cache.put("9.9.9.9", here, 100)
+    cache.add("9.9.9.9", None, 10)
+    assert cache.get("9.9.9.9") == (True, here)
+    clock.now += 101
+    cache.add("9.9.9.9", None, 10)
+    assert cache.get("9.9.9.9") == (True, None)
+    cache.add("1.1.1.1", None, 0)
+    assert cache.get("1.1.1.1") == (False, None)
+
+
+def test_cache_add_evicts_least_recently_used() -> None:
+    """`add()` keeps the size limit, too."""
+    cache: TtlCache[str, int] = TtlCache(size=1)
+    cache.add("a", 1, 100)
+    cache.add("b", 2, 100)
+    assert cache.get("a") == (False, None)
+    assert cache.get("b") == (True, 2)

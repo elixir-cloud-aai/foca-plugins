@@ -88,7 +88,11 @@ def test_input_urls(payload: Any, expected: list[str]) -> None:
         ("https://Data.Example.org./x", "data.example.org"),
         ("ftp://user:secret@ftp.example.org:21/x", "ftp.example.org"),
         ("https://[2001:db8::1]:8443/x", "2001:db8::1"),
-        ("s3://bucket/key", "bucket"),
+        ("HTTPS://data.example.org/x", "data.example.org"),
+        ("sftp://sftp.example.org/x", "sftp.example.org"),
+        ("s3://bucket.example.org/key", None),
+        ("gs://bucket/key", None),
+        ("drs://drs.example.org/object", None),
         ("file:///data/x", None),
         ("/data/x", None),
         ("http://[::1/x", None),
@@ -96,6 +100,8 @@ def test_input_urls(payload: Any, expected: list[str]) -> None:
 )
 def test_url_host(url: str, host: str | None) -> None:
     """Hosts are lowercase, without user info, port or trailing dot.
+
+    Only schemes whose authority is a host that serves the data count.
 
     Args:
         url: URL.
@@ -340,7 +346,9 @@ def test_resolver_survives_thread_limits(
     resolver = make_resolver(threads=1)
     with monkeypatch.context() as patch:
         patch.setattr(threading.Thread, "start", refuse)
-        assert resolver.resolve(["a.example.org"], soon(0.05)) == {}
+        started = time.monotonic()
+        assert resolver.resolve(["a.example.org"], soon(5)) == {}
+        assert time.monotonic() - started < 1
     # the slot was freed: the next name gets a thread
     assert resolver.resolve(["b.example.org"], soon(0.05)) == {}
     assert hang == ["b.example.org"]
@@ -426,3 +434,34 @@ def test_resolver_limits_resolutions_per_call(hang: list[str]) -> None:
     names = [f"h{i}.example.org" for i in range(5)]
     assert resolver.resolve(names, soon(0.05)) == {}
     assert sorted(hang) == names[:2]
+
+
+def test_resolver_wakes_callers_if_no_thread_starts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Callers that share a job whose thread didn't start don't wait for it.
+
+    Args:
+        monkeypatch: Pytest fixture.
+    """
+    resolver = make_resolver(threads=1)
+    shared: list[Any] = []
+
+    def refuse(self: threading.Thread) -> None:
+        """Note the job, then refuse to start its thread.
+
+        Args:
+            self: Thread.
+
+        Raises:
+            RuntimeError: Always.
+        """
+        shared.append(resolver._jobs["a.example.org"])
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", refuse)
+    assert resolver.resolve(["a.example.org"], soon(5)) == {}
+    (job,) = shared
+    # a caller that got the job before the failure isn't left waiting
+    assert job.done.is_set()
+    assert job.addresses == ()

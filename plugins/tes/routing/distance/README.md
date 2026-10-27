@@ -25,22 +25,24 @@ successor of proTES's distance-based task distribution.
 `route`:
 
 1. Takes the `url`s of the task's `inputs`, as the client submitted them
-   (`ctx.original`), and their hosts (any scheme with a host, e.g.,
-   `https`, `ftp`; inputs without URL or host, e.g., `file:///…` or inline
-   `content`, are left out). Hosts of buckets (e.g., `s3://bucket/key`)
-   are names without addresses, so such inputs can't be located.
+   (`ctx.original`), and their hosts, for the schemes `http`, `https`,
+   `ftp`, `ftps` and `sftp`. Other inputs are left out: those without URL
+   (inline `content`), `file:///…`, and buckets (e.g., `s3://bucket/key`,
+   `gs://…`), whose names say nothing about where the data is.
 2. Locates each host, at most `max_hosts` per task: host names are
-   resolved with the system resolver, all at once, within
-   `resolve_timeout` per call (and never beyond the step's deadline), and
-   the first **public** address is looked up by the provider. Private
-   addresses (e.g., in-cluster storage) are never looked up.
+   resolved with the system resolver, all at once, within half of
+   `resolve_timeout` (and never beyond the step's deadline), and the first
+   **public** address is looked up by the provider. Private addresses
+   (e.g., in-cluster storage) are never looked up.
 3. Locates each candidate backend: its location in the backend list
    (`location: {latitude: …, longitude: …}`, FOCA's `Backend.location`)
    if configured, or else that of its host's public address (unless
-   `locate_backends: false`).
+   `locate_backends: false`); backend names are resolved within the rest
+   of `resolve_timeout`.
 4. Ranks the located backends by the sum of the great-circle distances to
    the located inputs (each input URL counts once, so hosts with more
-   inputs weigh more), closest first; ties keep the candidates' order.
+   inputs weigh more; distances are computed once per host), closest
+   first; ties keep the candidates' order.
    Backends without location follow, in their order. No candidate is
    dropped.
 
@@ -117,7 +119,7 @@ know them: they are exact, and need no lookup.
 | `config.dbip_max_lookups` | 1 to 1000 | `5` | uncached lookups per call, for inputs and for backends each (`dbip`), so that no single task uses up DB-IP's quota |
 | `config.locate_backends` | boolean | `true` | whether backends without configured location are located by their address |
 | `config.max_hosts` | 1 to 1000 | `20` | input hosts to locate per task |
-| `config.resolve_timeout` | seconds, up to 60 | `2.0` | time to resolve the host names of a call, in total (and never beyond the step's deadline) |
+| `config.resolve_timeout` | seconds, up to 60 | `2.0` | time to resolve the host names of a call, in total: half for inputs, the rest for backends (and never beyond the step's deadline) |
 | `config.resolve_threads` | 1 to 256 | `16` | host names resolved at a time, per process, for inputs and for backends each (a call: at most a quarter for its inputs) |
 | `config.resolve_cache_ttl` | seconds, ≥ 0 | `300` | time to keep the addresses of host names, also of names that couldn't be resolved |
 | `config.cache_size` | ≥ 0 | `10000` | entries of each cache (addresses; host names of inputs and of backends; with `dbip`, places and coordinates); 0 turns the caches off |

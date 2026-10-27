@@ -25,6 +25,7 @@ The plugin API is documented in FOCA's `docs/plugins.md`
 (https://foca.readthedocs.io/en/latest/plugins/).
 """
 
+from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 import time
@@ -88,7 +89,8 @@ class DistanceConfig(BaseModel):
         max_hosts: Maximum number of input hosts to locate per task; inputs
             on further hosts are not located.
         resolve_timeout: Seconds to resolve the host names of a call, in
-            total (names are resolved in parallel).
+            total (names are resolved in parallel): half for inputs, the
+            rest for backends.
         resolve_threads: Maximum number of host names resolved at a time,
             per process, for inputs and for backends each; a call resolves
             at most a quarter of them for its inputs; further names are not
@@ -171,8 +173,6 @@ class _Locator:
         cache: Cache of looked-up locations, by address.
         settings: Admin settings.
         ctx: Context of the call.
-        deadline: Deadline of name resolution in this call
-            (`time.monotonic()` seconds).
         max_lookups: Maximum number of lookups by the provider per batch of
             hosts (inputs, backends); `None` for no limit.
         hosts: Locations of the hosts located in this call.
@@ -189,7 +189,6 @@ class _Locator:
     cache: TtlCache[str, Location | None]
     settings: DistanceConfig
     ctx: Context
-    deadline: float
     max_lookups: int | None
     hosts: dict[str, Location | None] = field(default_factory=dict)
     lookups: int = 0
@@ -198,7 +197,7 @@ class _Locator:
     skipped_lookups: int = 0
     batch_lookups: int = 0
 
-    def locate(self, hosts: Iterable[str], resolver: Resolver) -> None:
+    def locate(self, hosts: Iterable[str], resolver: Resolver, deadline: float) -> None:
         """Locate a batch of hosts not located in this call yet (cf. `hosts`).
 
         Host names are resolved together, in parallel.
@@ -206,12 +205,14 @@ class _Locator:
         Args:
             hosts: Host names or IP addresses.
             resolver: Resolver of the host names.
+            deadline: Deadline of their resolution (`time.monotonic()`
+                seconds).
         """
         self.batch_lookups = 0
         new = [host for host in dict.fromkeys(hosts) if host not in self.hosts]
         literals = {host: literal_address(host) for host in new}
         names = [host for host, literal in literals.items() if literal is None]
-        resolved = resolver.resolve(names, self.deadline)
+        resolved = resolver.resolve(names, deadline)
         for host in new:
             literal = literals[host]
             addresses = resolved.get(host, ()) if literal is None else (literal,)
@@ -244,7 +245,8 @@ class _Locator:
             self.failed_lookups += 1
             self.ctx.log.warning("Lookup failed: %s", exc)
             if not exc.transient:
-                self.cache.put(address, None, self.settings.cache_failure_ttl)
+                # keeps a location that a concurrent call found meanwhile
+                self.cache.add(address, None, self.settings.cache_failure_ttl)
             return None
         settings = self.settings
         ttl = settings.cache_miss_ttl if location is None else settings.cache_ttl
@@ -320,6 +322,7 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
                 backoff=config.dbip_backoff,
                 cache_size=config.cache_size,
                 cache_ttl=config.cache_ttl,
+                miss_ttl=config.cache_miss_ttl,
             )
         self.cache = TtlCache(config.cache_size)
         self.input_resolver = Resolver(
@@ -364,18 +367,23 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
             cache=self.cache,
             settings=settings,
             ctx=ctx,
-            deadline=time.monotonic() + min(settings.resolve_timeout, ctx.remaining()),
             max_lookups=(
                 settings.dbip_max_lookups if settings.provider == "dbip" else None
             ),
         )
-        hosts = list(dict.fromkeys(host for url in urls if (host := url_host(url))))
-        locator.locate(hosts[: settings.max_hosts], self.input_resolver)
+        # inputs per host: distances are computed once per host, weighted
+        weights = Counter(host for url in urls if (host := url_host(url)))
+        hosts = list(weights)
+        # names of inputs may take half of the time, backends the rest
+        budget = min(settings.resolve_timeout, ctx.remaining())
+        started = time.monotonic()
+        locator.locate(
+            hosts[: settings.max_hosts], self.input_resolver, started + budget / 2
+        )
         inputs = [
-            location
-            for url in urls
-            if (host := url_host(url)) is not None
-            and (location := locator.hosts.get(host)) is not None
+            (location, weights[host])
+            for host in hosts
+            if (location := locator.hosts.get(host)) is not None
         ]
         ranked: list[tuple[float, Backend]] = []
         unlocated: list[Backend] = []
@@ -389,17 +397,21 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
                         and (host := url_host(backend.url)) is not None
                     ),
                     self.backend_resolver,
+                    started + budget,
                 )
             for backend in candidates:
                 location = self._backend_location(backend, locator)
                 if location is None:
                     unlocated.append(backend)
                 else:
-                    total = sum(distance_km(location, i) for i in inputs)
+                    total = sum(
+                        weight * distance_km(location, place)
+                        for place, weight in inputs
+                    )
                     ranked.append((total, backend))
         ctx.record("inputs", len(urls))
         ctx.record("input_hosts", len(hosts))
-        ctx.record("located_inputs", len(inputs))
+        ctx.record("located_inputs", sum(weight for _, weight in inputs))
         ctx.record("located_backends", len(ranked))
         ctx.record("lookups", locator.lookups)
         ctx.record("cache_hits", locator.cache_hits)

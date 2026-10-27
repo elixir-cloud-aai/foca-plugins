@@ -65,22 +65,33 @@ def input_urls(payload: Any) -> list[str]:
     return list(dict.fromkeys(url for url in urls if isinstance(url, str) and url))
 
 
+HOST_SCHEMES = frozenset({"http", "https", "ftp", "ftps", "sftp"})
+"""Schemes of URLs whose authority is a host that serves the data.
+
+Not, e.g., `s3` or `gs`, whose authority is a bucket name: a bucket name
+that happens to resolve says nothing about where the data is.
+"""
+
+
 def url_host(url: str) -> str | None:
     """Get the host of a URL.
 
     Args:
-        url: URL, of any scheme (e.g., `https`, `ftp`, `s3`).
+        url: URL.
 
     Returns:
         Host name or IP address, lowercase, without user info, port,
-        brackets or trailing dot; `None` if the URL has no host or is
-        invalid.
+        brackets or trailing dot; `None` if the URL is invalid, has no host,
+        or its scheme is not in `HOST_SCHEMES`.
     """
     try:
-        host = urlsplit(url).hostname
+        parts = urlsplit(url)
+        host = parts.hostname
     except ValueError:
         return None
-    return host.rstrip(".") or None if host else None
+    if parts.scheme.lower() not in HOST_SCHEMES or not host:
+        return None
+    return host.rstrip(".") or None
 
 
 def literal_address(host: str) -> str | None:
@@ -239,6 +250,7 @@ class Resolver:
             ).start()
         except RuntimeError:  # no more threads
             self._release(host)
+            job.done.set()  # wake callers that share the job: no addresses
             return None, False
         return job, True
 
