@@ -112,11 +112,11 @@ jobs:
   # One entry per affected plugin, Python version and FOCA version. Python:
   # the lowest and highest versions that FOCA declares and tests (3.11 and
   # 3.15, its `requires-python` and classifiers), and the default (3.13, the
-  # newest in its security phase), which reports coverage; all gate, as in
-  # FOCA. FOCA: the lowest supported version (0.18.0, the first with the
-  # plugin API) and FOCA's `dev` branch, so that changes of the plugin API
-  # show before FOCA releases them (raise the lowest version with the plugins'
-  # lower bounds)
+  # newest in its security phase), which reports coverage with the entry
+  # marked `coverage`; all gate, as in FOCA. FOCA: the lowest supported
+  # version (0.18.0, the first with the plugin API) and FOCA's `dev` branch,
+  # so that changes of the plugin API show before FOCA releases them (raise
+  # the lowest version with the plugins' lower bounds)
   test:
     name: Test (${{ matrix.package.name }}, Python ${{ matrix.python-version }}, FOCA ${{ matrix.foca }})
     needs: changes

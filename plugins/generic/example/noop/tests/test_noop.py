@@ -12,7 +12,7 @@ from importlib.metadata import entry_points
 import time
 from typing import Any
 
-from foca.plugins import Context, Principal
+from foca.plugins import Backend, Context, Principal
 from foca.plugins.base import check_plugin_class
 from foca.plugins.config import PluginsConfig
 from foca.plugins.engine import PluginHost
@@ -29,7 +29,15 @@ from foca_plugins.generic.example.noop import Noop, NoopConfig, NoopParams
 
 PLUGIN_ID = "generic.example.noop"
 CONFIG = {"label": "gateway-1"}
-BACKENDS = [make_backend("a"), make_backend("b")]
+
+
+def make_backends() -> list[Backend]:
+    """Build candidate backends, new for each use (cf. `make_task()`).
+
+    Returns:
+        Backends `a` and `b`.
+    """
+    return [make_backend("a"), make_backend("b")]
 
 
 def make_task() -> dict[str, Any]:
@@ -160,9 +168,9 @@ def test_on_route_keeps_candidates(plugin: Noop) -> None:
         plugin: Plugin.
     """
     ctx = make_context()
-    candidates = tuple(BACKENDS)
+    candidates = tuple(make_backends())
     result = plugin.on_route(candidates, ctx)
-    assert result == BACKENDS
+    assert result == make_backends()
     assert ctx.annotations == {"candidates": 2}
 
 
@@ -174,7 +182,7 @@ def test_hooks_record_nothing_if_disabled(plugin: Noop) -> None:
     """
     ctx = make_context(NoopParams(record=False))
     plugin.on_request(make_inbound(make_task()), ctx)
-    assert plugin.on_route(BACKENDS, ctx) == BACKENDS
+    assert plugin.on_route(make_backends(), ctx) == make_backends()
     assert ctx.annotations == {}
 
 
@@ -197,12 +205,13 @@ def test_harness_runs_hooks() -> None:
     """Through the engine, the hooks keep their inputs and record.
 
     Shows FOCA's `PluginHarness`, which runs the plugin class directly (no
-    entry point), with the kit's fake `ctx.http`.
+    entry point); plugins that send requests pass it a `FakeHttp`.
     """
     harness = PluginHarness(
         Noop, config=CONFIG, params={"record": True}, plugin_id=PLUGIN_ID
     )
-    assert harness.run_route(BACKENDS, make_inbound(make_task())) == BACKENDS
+    routed = harness.run_route(make_backends(), make_inbound(make_task()))
+    assert routed == make_backends()
     assert [(e.phase, e.outcome, e.annotations) for e in harness.executions] == [
         ("request", "ok", {"label": "gateway-1"}),
         ("route", "ok", {"candidates": 2}),
@@ -219,7 +228,7 @@ def test_pipeline_runs_plugin(host: PluginHost) -> None:
         make_inbound(make_task()), Principal(subject="alice"), request_id="r1"
     )
     assert run.request().payload == make_task()
-    assert run.route(BACKENDS) == BACKENDS
+    assert run.route(make_backends()) == make_backends()
     assert [(e.phase, e.outcome, e.annotations) for e in run.executions] == [
         ("request", "ok", {"label": "gateway-1"}),
         ("route", "ok", {"candidates": 2}),
