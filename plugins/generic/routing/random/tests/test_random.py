@@ -16,7 +16,6 @@ from foca.plugins import Context, InvalidParams, Principal
 from foca.plugins.base import check_plugin_class
 from foca.plugins.config import PluginsConfig
 from foca.plugins.engine import PluginHost
-from foca.plugins.errors import GatewayError
 from foca.plugins.testing import (
     PluginHarness,
     check_plugin_contract,
@@ -116,12 +115,16 @@ def test_entry_point_is_registered() -> None:
 
 @pytest.mark.parametrize("api", ["tes", "wes"])
 def test_plugin_class_is_valid(api: str) -> None:
-    """FOCA accepts the class for every API; it routes only.
+    """FOCA accepts the class for every API.
 
     Args:
         api: API of a gateway app.
     """
     assert check_plugin_class(Random, PLUGIN_ID, api) is Random
+
+
+def test_plugin_class_describes_itself() -> None:
+    """The class routes only, describes itself and sends no data out."""
     assert Random.phases() == ("route",)
     title, description = Random.summary()
     assert title == "Route to the candidates in random order."
@@ -147,6 +150,21 @@ def test_settings_have_defaults() -> None:
     assert RandomParams().seed is None
 
 
+def test_seed_zero_is_a_seed(plugin: Random) -> None:
+    """`seed: 0` seeds the order (it is not taken for "no seed").
+
+    Args:
+        plugin: Plugin.
+    """
+    ctx = make_context(RandomParams(seed=0))
+    expected = list(BACKENDS)
+    random.Random(0).shuffle(expected)  # noqa: S311 (test of a seeded order)
+    assert plugin.on_route(BACKENDS, ctx) == expected
+    assert ctx.annotations == {"candidates": 8, "seeded": True}
+    with pytest.raises(InvalidParams):
+        Random(PLUGIN_ID, RandomConfig()).check_params(RandomParams(seed=0))
+
+
 @pytest.mark.parametrize(
     ("model", "data"),
     [
@@ -154,6 +172,9 @@ def test_settings_have_defaults() -> None:
         (RandomConfig, {"allow_seed": "maybe"}),
         (RandomParams, {"other": "value"}),
         (RandomParams, {"seed": "abc"}),
+        (RandomParams, {"seed": "7"}),
+        (RandomParams, {"seed": 1.0}),
+        (RandomParams, {"seed": True}),
     ],
 )
 def test_settings_are_validated(model: type[BaseModel], data: dict[str, Any]) -> None:
@@ -266,11 +287,12 @@ def test_harness_routes_with_seed() -> None:
     harness = PluginHarness(
         Random, config={"allow_seed": True}, params={"seed": 7}, plugin_id=PLUGIN_ID
     )
-    first = harness.run_route(BACKENDS, make_inbound(make_task()))
-    assert harness.run_route(BACKENDS, make_inbound(make_task())) == first
-    assert sorted(first, key=lambda b: b.id) == BACKENDS
+    backends = [make_backend(f"h{i}") for i in range(5)]
+    first = harness.run_route(backends, make_inbound(make_task()))
+    assert harness.run_route(backends, make_inbound(make_task())) == first
+    assert sorted(first, key=lambda b: b.id) == backends
     assert [(e.phase, e.outcome, e.annotations) for e in harness.executions] == [
-        ("route", "ok", {"candidates": 8, "seeded": True}),
+        ("route", "ok", {"candidates": 5, "seeded": True}),
     ]
 
 
@@ -293,5 +315,5 @@ def test_pipeline_runs_plugin(host: PluginHost) -> None:
 
 def test_pipeline_refuses_seed_unless_allowed() -> None:
     """A default pipeline with a seed but no `allow_seed` fails to resolve."""
-    with pytest.raises((GatewayError, ValueError), match="allow_seed"):
+    with pytest.raises(ValueError, match="allow_seed"):
         make_host({}, {"seed": 1}).close()

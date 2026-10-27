@@ -17,7 +17,7 @@ from collections.abc import Sequence
 import random
 
 from foca.plugins import Backend, Context, InvalidParams, Plugin
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictInt
 
 
 class RandomConfig(BaseModel):
@@ -39,14 +39,15 @@ class RandomParams(BaseModel):
 
     Attributes:
         seed: Seed of the shuffling, for reproducible orders in tests;
-            refused unless `allow_seed` is set. Without a seed, the order
+            an integer (no booleans, floats or strings); refused unless
+            `allow_seed` is set. Without a seed, the order
             comes from the operating system's randomness
             (`random.SystemRandom`).
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    seed: int | None = None
+    seed: StrictInt | None = None
 
 
 class Random(Plugin[RandomConfig, RandomParams]):
@@ -64,7 +65,8 @@ class Random(Plugin[RandomConfig, RandomParams]):
     description = (
         "Returns all candidate backends in random order, so that requests"
         " spread over them; with a seed (if the admin allows it, for tests),"
-        " the order depends only on the seed and the order of the candidates."
+        " the order depends only on the seed and the order of the candidates"
+        " (on the same Python version)."
     )
 
     # Set by `setup()`, from the admin settings
@@ -101,14 +103,25 @@ class Random(Plugin[RandomConfig, RandomParams]):
             All candidates, in random order (a new list).
         """
         seed = _params(ctx).seed
-        rng = (
-            random.SystemRandom() if seed is None else random.Random(seed)  # noqa: S311 (seeded for tests only)
-        )
         shuffled = list(candidates)
-        rng.shuffle(shuffled)
+        _rng(seed).shuffle(shuffled)
         ctx.record("candidates", len(shuffled))
         ctx.record("seeded", seed is not None)
         return shuffled
+
+
+def _rng(seed: int | None) -> random.Random:
+    """Create the random number generator of a call.
+
+    Args:
+        seed: Seed, or `None` for the operating system's randomness.
+
+    Returns:
+        `random.SystemRandom` without a seed, else `random.Random(seed)`.
+    """
+    if seed is None:
+        return random.SystemRandom()
+    return random.Random(seed)  # noqa: S311 (seeded for tests only)
 
 
 def _params(ctx: Context) -> RandomParams:

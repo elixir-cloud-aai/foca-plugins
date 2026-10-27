@@ -56,10 +56,25 @@ plugins:
 | `config.allow_seed` | boolean | `false` | whether pipelines may set `seed` |
 | `params.seed` | integer or `null` | `null` | seed of the shuffling, for reproducible orders in tests; refused (when pipelines are resolved) unless `allow_seed` is set |
 
-With a seed, the order depends only on the seed and the order of the
-candidates, so the order of the backend list is the stable tie-breaker.
-Seeded orders are predictable, also for clients that choose the plugin in
-their own pipelines: keep `allow_seed` off in production.
+With a seed, the order is a function of the seed and the candidate list,
+on the same Python version (Python doesn't promise the same shuffles
+across versions). Seeded orders are predictable, also for clients that
+choose the plugin in their own pipelines: keep `allow_seed` off in
+production. A test setup:
+
+```yaml
+plugins:
+  available:
+    generic.routing.random:
+      config:
+        allow_seed: true  # tests only
+  pipeline:
+    - id: route
+      alternatives:
+        - plugin: generic.routing.random
+          params:
+            seed: 42
+```
 
 ### proTES's old default
 
