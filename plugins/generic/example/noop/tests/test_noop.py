@@ -31,25 +31,33 @@ PLUGIN_ID = "generic.example.noop"
 CONFIG = {"label": "gateway-1"}
 
 
-def make_backends() -> list[Backend]:
+def make_backends(*ids: str) -> list[Backend]:
     """Build candidate backends, new for each use (cf. `make_task()`).
 
+    Args:
+        ids: Identifiers; default to `a` and `b`.
+
     Returns:
-        Backends `a` and `b`.
+        Backends.
     """
-    return [make_backend("a"), make_backend("b")]
+    return [make_backend(id_) for id_ in ids or ("a", "b")]
 
 
-def make_task() -> dict[str, Any]:
+def make_task(name: str = "task") -> dict[str, Any]:
     """Build a task, new for each use, so that tests share no payload.
 
     A hook that changed a shared payload in place would change the expected
-    value, too, and comparisons would pass however the hook behaved.
+    value, too, and comparisons would pass however the hook behaved. Tests
+    that check that hooks keep their input pass values of their own, so
+    that hooks returning constants can't pass them either.
+
+    Args:
+        name: Name of the task.
 
     Returns:
         Task.
     """
-    return {"name": "task"}
+    return {"name": name}
 
 
 def make_context(params: BaseModel | None = None) -> Context:
@@ -154,10 +162,10 @@ def test_on_request_keeps_request(plugin: Noop) -> None:
     Args:
         plugin: Plugin.
     """
-    request = make_inbound(make_task())
+    request = make_inbound(make_task("kept"))
     ctx = make_context()
     plugin.on_request(request, ctx)
-    assert request == make_inbound(make_task())
+    assert request == make_inbound(make_task("kept"))
     assert ctx.annotations == {"label": "gateway-1"}
 
 
@@ -168,10 +176,10 @@ def test_on_route_keeps_candidates(plugin: Noop) -> None:
         plugin: Plugin.
     """
     ctx = make_context()
-    candidates = tuple(make_backends())
+    candidates = tuple(make_backends("x", "y", "z"))
     result = plugin.on_route(candidates, ctx)
-    assert result == make_backends()
-    assert ctx.annotations == {"candidates": 2}
+    assert result == make_backends("x", "y", "z")
+    assert ctx.annotations == {"candidates": 3}
 
 
 def test_hooks_record_nothing_if_disabled(plugin: Noop) -> None:
@@ -210,8 +218,8 @@ def test_harness_runs_hooks() -> None:
     harness = PluginHarness(
         Noop, config=CONFIG, params={"record": True}, plugin_id=PLUGIN_ID
     )
-    routed = harness.run_route(make_backends(), make_inbound(make_task()))
-    assert routed == make_backends()
+    routed = harness.run_route(make_backends("x", "y"), make_inbound(make_task()))
+    assert routed == make_backends("x", "y")
     assert [(e.phase, e.outcome, e.annotations) for e in harness.executions] == [
         ("request", "ok", {"label": "gateway-1"}),
         ("route", "ok", {"candidates": 2}),
@@ -225,10 +233,10 @@ def test_pipeline_runs_plugin(host: PluginHost) -> None:
         host: Plugin host.
     """
     run = host.start(
-        make_inbound(make_task()), Principal(subject="alice"), request_id="r1"
+        make_inbound(make_task("kept")), Principal(subject="alice"), request_id="r1"
     )
-    assert run.request().payload == make_task()
-    assert run.route(make_backends()) == make_backends()
+    assert run.request().payload == make_task("kept")
+    assert run.route(make_backends("x", "y")) == make_backends("x", "y")
     assert [(e.phase, e.outcome, e.annotations) for e in run.executions] == [
         ("request", "ok", {"label": "gateway-1"}),
         ("route", "ok", {"candidates": 2}),

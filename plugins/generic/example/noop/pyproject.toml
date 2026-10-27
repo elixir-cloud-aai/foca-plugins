@@ -62,8 +62,8 @@ Issues = "https://github.com/elixir-cloud-aai/foca-plugins/issues"
 [project.entry-points."foca.plugins"]
 "generic.example.noop" = "foca_plugins.generic.example.noop:Noop"
 
-# `foca_plugins`, `foca_plugins.generic` and `foca_plugins.generic.example`
-# are namespace packages shared with the other plugins (PEP 420): the wheel
+# `foca_plugins` and the packages of the plugin's group and subgroup are
+# namespace packages shared with the other plugins (PEP 420): the wheel
 # contains this plugin's package only
 [tool.setuptools.packages.find]
 where = ["src"]
