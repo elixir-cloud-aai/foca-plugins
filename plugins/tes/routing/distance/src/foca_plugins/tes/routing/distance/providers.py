@@ -1,4 +1,4 @@
-"""Location providers and the cache of their lookups.
+"""Location providers.
 
 A provider gives the location of a public IP address, or `None` if it
 knows none (a miss). Lookups that fail (e.g., a service is unavailable)
@@ -38,17 +38,24 @@ class LookupFailed(Exception):
 
     Attributes:
         status: HTTP status of the response that failed the lookup, if any.
+        transient: Whether the lookup failed only for lack of time in this
+            call (e.g., a rate limit), so that it may succeed in the next
+            call; such failures aren't cached.
     """
 
-    def __init__(self, message: str, status: int | None = None) -> None:
+    def __init__(
+        self, message: str, status: int | None = None, *, transient: bool = False
+    ) -> None:
         """Create the error.
 
         Args:
             message: Message, without addresses.
             status: HTTP status of the response, if any.
+            transient: Whether the lookup failed only for lack of time.
         """
         super().__init__(message)
         self.status = status
+        self.transient = transient
 
 
 class Provider(Protocol):
@@ -167,11 +174,20 @@ class DbipProvider:
     Nominatim's usage policy allows at most one request per second, from an
     application that identifies itself in its user agent: the requests of a
     process take turns (`interval`), and none waits beyond the call's
-    deadline. A turn is booked before DB-IP is asked, so that no answer of
-    DB-IP is lost for lack of time. Places (by address) and coordinates (by
-    place) are cached; when DB-IP refuses lookups (an `error` answer, e.g.,
-    over its daily quota, or HTTP 429), the provider asks it nothing for
-    `backoff` seconds.
+    deadline. Before DB-IP is asked, the next free turn must be before the
+    deadline (so that answers of DB-IP are rarely lost for lack of time);
+    turns are booked only for requests to Nominatim. Places (by address)
+    and coordinates (by place) are cached; when DB-IP refuses lookups (an
+    `error` answer, e.g., over its daily quota, or HTTP 429), the provider
+    asks it nothing for `backoff` seconds.
+
+    Attributes:
+        dbip_url: Base URL of DB-IP's API.
+        nominatim_url: Base URL of Nominatim.
+        headers: Headers of the requests.
+        interval: Seconds between requests to Nominatim.
+        backoff: Seconds to ask DB-IP nothing after it refused a lookup.
+        cache_ttl: Seconds to keep places and coordinates.
     """
 
     def __init__(
@@ -235,12 +251,11 @@ class DbipProvider:
         http = ctx.http
         if http is None:
             raise PluginError("Provider 'dbip' needs ctx.http")
-        turn: float | None = None
         cached, place = self._places.get(address)
         if not cached:
             if self._clock() < self._blocked_until:
                 raise LookupFailed("DB-IP refused lookups recently; backing off")
-            turn = self._book(ctx)
+            self._check_turn(ctx)
             place = self._place(http, address)
             self._places.put(address, place, self.cache_ttl)
         if place is None:
@@ -252,8 +267,7 @@ class DbipProvider:
         for query in queries:
             cached, location = self._searches.get(query)
             if not cached:
-                self._wait(self._book(ctx) if turn is None else turn)
-                turn = None
+                self._wait(self._book(ctx))
                 location = self._search(http, query)
                 self._searches.put(query, location, self.cache_ttl)
             if location is not None:
@@ -358,6 +372,22 @@ class DbipProvider:
         with self._lock:
             self._blocked_until = self._clock() + self.backoff
 
+    def _check_turn(self, ctx: Context) -> None:
+        """Check that the next free turn comes before the deadline.
+
+        Args:
+            ctx: Context of the call (deadline).
+
+        Raises:
+            LookupFailed: The next turn comes after the deadline (transient).
+        """
+        with self._lock:
+            now = self._clock()
+            if max(now, self._next) - now > ctx.remaining():
+                raise LookupFailed(
+                    "Nominatim's rate limit leaves no time", transient=True
+                )
+
     def _book(self, ctx: Context) -> float:
         """Book the next turn for a request to Nominatim.
 
@@ -368,13 +398,15 @@ class DbipProvider:
             Time of the turn (of `clock`).
 
         Raises:
-            LookupFailed: The turn would come after the deadline.
+            LookupFailed: The turn would come after the deadline (transient).
         """
         with self._lock:
             now = self._clock()
             turn = max(now, self._next)
             if turn - now > ctx.remaining():
-                raise LookupFailed("Nominatim's rate limit leaves no time")
+                raise LookupFailed(
+                    "Nominatim's rate limit leaves no time", transient=True
+                )
             self._next = turn + self.interval
             return turn
 

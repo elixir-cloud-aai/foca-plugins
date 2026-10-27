@@ -15,6 +15,9 @@ class TtlCache(Generic[K, V]):
 
     Beyond its size, the entry used least recently goes. Safe for
     concurrent use.
+
+    Attributes:
+        size: Maximum number of entries; 0 turns the cache off.
     """
 
     def __init__(self, size: int, clock: Callable[[], float] = time.monotonic) -> None:

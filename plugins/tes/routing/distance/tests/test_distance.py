@@ -33,6 +33,7 @@ import pytest
 import requests
 
 from foca_plugins.tes.routing.distance import Distance, DistanceConfig, geo
+from foca_plugins.tes.routing.distance.cache import TtlCache
 from foca_plugins.tes.routing.distance.geo import distance_km
 from foca_plugins.tes.routing.distance.providers import LookupFailed
 
@@ -535,7 +536,7 @@ def test_failed_lookups_are_cached_briefly(
         return real(address, ctx)
 
     now = [1000.0]
-    monkeypatch.setattr(plugin.cache, "_clock", lambda: now[0])
+    plugin.cache = TtlCache(plugin.settings.cache_size, clock=lambda: now[0])
     monkeypatch.setattr(provider, "locate", flaky)
     task = make_task(addresses["zurich"])
     ctx = make_context(task)
@@ -544,18 +545,18 @@ def test_failed_lookups_are_cached_briefly(
     assert ctx.annotations["failed_lookups"] == 1
     plugin.on_route(world, make_context(task))
     assert len(failed) == 1
-    now[0] += 61
+    now[0] += plugin.settings.cache_failure_ttl + 1
     plugin.on_route(world, make_context(task))
     assert len(failed) == 2
 
 
-def test_misses_expire(
+def test_transient_failures_are_not_cached(
     plugin: Distance,
     world: list[Backend],
     addresses: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Addresses without location are kept for `cache_miss_ttl`, located ones longer.
+    """Lookups that failed for lack of time are tried again in the next call.
 
     Args:
         plugin: Plugin.
@@ -563,17 +564,60 @@ def test_misses_expire(
         addresses: Addresses in the networks of the test database.
         monkeypatch: Pytest fixture.
     """
+    provider = plugin.provider
+    real = provider.locate
+    failed: list[str] = []
+
+    def busy(address: str, ctx: Context) -> Location | None:
+        """Have no time for the address in Sydney.
+
+        Args:
+            address: Address.
+            ctx: Context.
+
+        Returns:
+            Location, if any.
+
+        Raises:
+            LookupFailed: For the address in Sydney (transient).
+        """
+        if address == addresses["sydney"]:
+            failed.append(address)
+            raise LookupFailed("no time", transient=True)
+        return real(address, ctx)
+
+    monkeypatch.setattr(provider, "locate", busy)
+    task = make_task(addresses["zurich"])
+    for _ in range(2):
+        ctx = make_context(task)
+        plugin.on_route(world, ctx)
+        assert ctx.annotations["failed_lookups"] == 1
+    assert len(failed) == 2
+
+
+def test_misses_expire(
+    plugin: Distance, world: list[Backend], addresses: dict[str, str]
+) -> None:
+    """Addresses without location are kept for `cache_miss_ttl`, located ones longer.
+
+    Args:
+        plugin: Plugin.
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+    """
     now = [1000.0]
-    monkeypatch.setattr(plugin.cache, "_clock", lambda: now[0])
+    settings = plugin.settings
+    plugin.cache = TtlCache(settings.cache_size, clock=lambda: now[0])
     # one input in Zurich, one unknown (a miss); 3 backends
+    assert len(world) == 3
     task = make_task(addresses["zurich"], "4.4.4.4")
     plugin.on_route(world, make_context(task))
-    now[0] += 3601
+    now[0] += settings.cache_miss_ttl + 1
     ctx = make_context(task)
     plugin.on_route(world, ctx)
     # only the miss is looked up again
     assert (ctx.annotations["lookups"], ctx.annotations["cache_hits"]) == (1, 4)
-    now[0] += 86400
+    now[0] += settings.cache_ttl
     ctx = make_context(task)
     plugin.on_route(world, ctx)
     assert (ctx.annotations["lookups"], ctx.annotations["cache_hits"]) == (5, 0)
@@ -669,7 +713,7 @@ def test_slow_name_servers_dont_hold_the_call(
     addresses: dict[str, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Names that hang cost one `resolve_timeout` per call, with bounded threads.
+    """Names that hang cost one `resolve_timeout` per call, with few threads.
 
     Args:
         database: Test database.
@@ -708,11 +752,12 @@ def test_slow_name_servers_dont_hold_the_call(
         ctx = make_context(task)
         assert ids(plugin.on_route(world, ctx))[0] == "helsinki"
         assert time.monotonic() - started < 1
-        # again: the hanging names are neither resolved again nor waited for
+        # again: a call starts at most a quarter of the threads (1), and
+        # waits for the hanging name of the first call, not resolving it again
         plugin.on_route(world, make_context(task))
         assert time.monotonic() - started < 2
-        assert len(asked) == 4
-        assert threading.active_count() - before <= 4
+        assert asked == names[:2]
+        assert threading.active_count() - before <= 2
     finally:
         release.set()
         plugin.close()
@@ -816,7 +861,7 @@ def test_online_provider_through_engine(
 def test_online_lookups_are_capped_per_call(
     world: list[Backend], addresses: dict[str, str], places: dict[str, Location]
 ) -> None:
-    """With `provider: dbip`, a call looks up at most `dbip_max_lookups` addresses.
+    """With `dbip`, inputs and backends each get `dbip_max_lookups` lookups.
 
     Args:
         world: Backends.
@@ -830,11 +875,14 @@ def test_online_lookups_are_capped_per_call(
         plugin_id=PLUGIN_ID,
         http=http,
     )
+    assert len(world) == 3
     harness.run_route(world, make_inbound(make_task(addresses["zurich"])))
     (execution,) = harness.executions
-    assert execution.annotations["lookups"] == 2
-    assert execution.annotations["skipped_lookups"] == 2
-    assert len(http.calls) == 4
+    # the input, then 2 of the 3 backends (a budget per batch)
+    assert execution.annotations["lookups"] == 3
+    assert execution.annotations["skipped_lookups"] == 1
+    # DB-IP and Nominatim for each lookup
+    assert len(http.calls) == 6
 
 
 def dbip_http(addresses: dict[str, str], places: dict[str, Location]) -> FakeHttp:
@@ -915,3 +963,56 @@ def test_pipeline_runs_plugin(
         assert ids(run.route(world)) == ["helsinki", "mountain_view", "sydney"]
     finally:
         host.close()
+
+
+def test_input_names_cant_hold_up_backends(
+    database: Path, addresses: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Backend names resolve even while names of inputs hang in all threads.
+
+    Args:
+        database: Test database.
+        addresses: Addresses in the networks of the test database.
+        monkeypatch: Pytest fixture.
+    """
+    release = threading.Event()
+
+    def getaddrinfo(host: str, *args: Any, **kwargs: Any) -> list[Any]:
+        """Hang for names of inputs; resolve backends to Helsinki.
+
+        Args:
+            host: Host name.
+            args: Other arguments.
+            kwargs: Other keyword arguments.
+
+        Returns:
+            Address info.
+        """
+        if host.endswith(".slow.example"):
+            release.wait(10)
+            return []
+        return [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", (addresses["helsinki"], 443))
+        ]
+
+    monkeypatch.setattr(geo.socket, "getaddrinfo", getaddrinfo)
+    plugin = Distance(
+        PLUGIN_ID,
+        DistanceConfig(database=database, resolve_timeout=0.1, resolve_threads=4),
+    )
+    try:
+        # four tasks take the four threads of input names (one per call)
+        for index in range(4):
+            task = make_task(addresses["zurich"], f"h{index}.slow.example")
+            plugin.on_route([backend("a", addresses["sydney"])], make_context(task))
+        candidates = [
+            backend("sydney", addresses["sydney"]),
+            backend("helsinki", "tes.helsinki.example"),
+        ]
+        task = make_task(addresses["zurich"], "h9.slow.example")
+        ctx = make_context(task)
+        assert ids(plugin.on_route(candidates, ctx)) == ["helsinki", "sydney"]
+        assert ctx.annotations["located_backends"] == 2
+    finally:
+        release.set()
+        plugin.close()

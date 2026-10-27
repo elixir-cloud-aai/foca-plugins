@@ -1,7 +1,7 @@
-"""Geographic helpers: distances, input URLs and host addresses.
+"""Geographic helpers: distances, input URLs, host addresses and names.
 
-Plain functions, and the resolver of host names, used by the plugin and its
-providers.
+Plain functions, and :py:class:`Resolver`, which resolves host names in
+threads bounded in time and number, used by the plugin.
 """
 
 from collections.abc import Callable, Iterable
@@ -142,9 +142,17 @@ class Resolver:
     daemon thread, which callers abandon at their deadline (as FOCA's
     guarded HTTP client does). To keep slow or hostile name servers from
     piling up threads, a process runs at most `threads` resolutions at a
-    time and at most one per name; names beyond that stay unresolved.
-    Results, also failures, are cached for `ttl`, so that a name is not
-    resolved again on every request.
+    time, and one call starts at most `per_call`; names beyond that stay
+    unresolved in that call. A name is resolved by one thread at a time:
+    concurrent callers wait for it, each until its own deadline. Results,
+    also failures, are cached for `ttl`, so that a name is not resolved
+    again on every request.
+
+    Attributes:
+        ttl: Seconds to keep results.
+        per_call: Maximum number of resolutions that one call starts; `None`
+            for no limit but `threads`.
+        cache: Addresses by host name.
     """
 
     def __init__(
@@ -152,6 +160,8 @@ class Resolver:
         threads: int,
         ttl: float,
         cache_size: int,
+        *,
+        per_call: int | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """Create the resolver.
@@ -160,13 +170,15 @@ class Resolver:
             threads: Maximum number of resolutions at a time.
             ttl: Seconds to keep results; 0 keeps none.
             cache_size: Maximum number of cached names; 0 caches none.
+            per_call: Maximum number of resolutions that one call starts.
             clock: Clock of the cache, for tests.
         """
         self.ttl = ttl
+        self.per_call = per_call
         self.cache: TtlCache[str, tuple[str, ...]] = TtlCache(cache_size, clock)
         self._slots = threading.BoundedSemaphore(threads)
         self._lock = threading.Lock()
-        self._pending: set[str] = set()
+        self._jobs: dict[str, _Job] = {}
 
     def resolve(
         self, hosts: Iterable[str], deadline: float
@@ -185,39 +197,50 @@ class Resolver:
         """
         results: dict[str, tuple[str, ...]] = {}
         jobs: list[_Job] = []
+        started = 0
         for host in dict.fromkeys(hosts):
             cached, addresses = self.cache.get(host)
             if cached:
                 results[host] = addresses or ()
-            elif time.monotonic() < deadline and (job := self._start(host)):
+                continue
+            if time.monotonic() >= deadline:
+                continue
+            may_start = self.per_call is None or started < self.per_call
+            job, new = self._job(host, may_start=may_start)
+            started += new
+            if job is not None:
                 jobs.append(job)
         for job in jobs:
             if job.done.wait(max(deadline - time.monotonic(), 0)):
                 results[job.host] = job.addresses
         return results
 
-    def _start(self, host: str) -> _Job | None:
-        """Start resolving a name, if a thread is free and none resolves it.
+    def _job(self, host: str, *, may_start: bool) -> tuple[_Job | None, bool]:
+        """Get the running resolution of a name, or start one.
 
         Args:
             host: Host name.
+            may_start: Whether a resolution may be started.
 
         Returns:
-            The job, or `None` if it was not started.
+            The job (`None` if none runs and none was started), and whether
+            it was started.
         """
         with self._lock:
-            if host in self._pending or not self._slots.acquire(blocking=False):
-                return None
-            self._pending.add(host)
-        job = _Job(host)
+            job = self._jobs.get(host)
+            if job is not None:
+                return job, False
+            if not may_start or not self._slots.acquire(blocking=False):
+                return None, False
+            job = self._jobs[host] = _Job(host)
         try:
             threading.Thread(
                 target=self._run, args=(job,), name="distance-resolve", daemon=True
             ).start()
         except RuntimeError:  # no more threads
             self._release(host)
-            return None
-        return job
+            return None, False
+        return job, True
 
     def _run(self, job: _Job) -> None:
         """Resolve a name and cache the result (in the job's thread).
@@ -236,11 +259,11 @@ class Resolver:
             job.done.set()
 
     def _release(self, host: str) -> None:
-        """Free the thread slot of a name.
+        """Forget the job of a name and free its thread slot.
 
         Args:
             host: Host name.
         """
         with self._lock:
-            self._pending.discard(host)
+            del self._jobs[host]
             self._slots.release()

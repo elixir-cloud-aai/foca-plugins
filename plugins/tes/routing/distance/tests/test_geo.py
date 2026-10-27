@@ -143,6 +143,16 @@ def hang(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
     asked: list[str] = []
 
     def getaddrinfo(host: str, *args: Any, **kwargs: Any) -> Any:
+        """Hang until the test ends.
+
+        Args:
+            host: Host name.
+            args: Other arguments.
+            kwargs: Other keyword arguments.
+
+        Returns:
+            Address info.
+        """
         asked.append(host)
         release.wait(5)
         return addrinfo("9.9.9.9")
@@ -181,6 +191,16 @@ def test_resolver_failures_give_no_addresses(
     asked: list[str] = []
 
     def fail(host: str, *args: Any, **kwargs: Any) -> Any:
+        """Fail to resolve.
+
+        Args:
+            host: Host name.
+            args: Other arguments.
+            kwargs: Other keyword arguments.
+
+        Raises:
+            Exception: The error of the test.
+        """
         asked.append(host)
         raise error
 
@@ -200,6 +220,16 @@ def test_resolver_resolves_in_parallel(monkeypatch: pytest.MonkeyPatch) -> None:
     barrier = threading.Barrier(3, timeout=2)
 
     def getaddrinfo(host: str, *args: Any, **kwargs: Any) -> Any:
+        """Resolve once all three names are resolved at the same time.
+
+        Args:
+            host: Host name.
+            args: Other arguments.
+            kwargs: Other keyword arguments.
+
+        Returns:
+            Address info.
+        """
         barrier.wait()  # breaks unless all three run at once
         return addrinfo("9.9.9.9")
 
@@ -217,6 +247,16 @@ def test_resolver_caches_until_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
     asked: list[str] = []
 
     def getaddrinfo(host: str, *args: Any, **kwargs: Any) -> Any:
+        """Resolve every name to the same address.
+
+        Args:
+            host: Host name.
+            args: Other arguments.
+            kwargs: Other keyword arguments.
+
+        Returns:
+            Address info.
+        """
         asked.append(host)
         return addrinfo("9.9.9.9")
 
@@ -287,6 +327,14 @@ def test_resolver_survives_thread_limits(
     """
 
     def refuse(self: threading.Thread) -> None:
+        """Refuse to start a thread.
+
+        Args:
+            self: Thread.
+
+        Raises:
+            RuntimeError: Always.
+        """
         raise RuntimeError("can't start new thread")
 
     resolver = make_resolver(threads=1)
@@ -322,3 +370,59 @@ def test_public_address(addresses: list[str], expected: str | None) -> None:
         expected: Address used.
     """
     assert public_address(addresses) == expected
+
+
+def test_resolver_callers_share_a_running_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent callers wait for the running resolution of a name.
+
+    Args:
+        monkeypatch: Pytest fixture.
+    """
+    asked: list[str] = []
+
+    def slow(host: str, *args: Any, **kwargs: Any) -> Any:
+        """Resolve after a while.
+
+        Args:
+            host: Host name.
+            args: Other arguments.
+            kwargs: Other keyword arguments.
+
+        Returns:
+            Address info.
+        """
+        asked.append(host)
+        time.sleep(0.2)
+        return addrinfo("9.9.9.9")
+
+    monkeypatch.setattr(geo.socket, "getaddrinfo", slow)
+    resolver = make_resolver(threads=1)
+    results: list[dict[str, tuple[str, ...]]] = []
+    callers = [
+        threading.Thread(
+            target=lambda: results.append(
+                resolver.resolve(["shared.example.org"], soon())
+            )
+        )
+        for _ in range(3)
+    ]
+    for caller in callers:
+        caller.start()
+    for caller in callers:
+        caller.join(5)
+    assert results == [{"shared.example.org": ("9.9.9.9",)}] * 3
+    assert asked == ["shared.example.org"]
+
+
+def test_resolver_limits_resolutions_per_call(hang: list[str]) -> None:
+    """One call starts at most `per_call` resolutions.
+
+    Args:
+        hang: Names passed to the hanging resolver.
+    """
+    resolver = Resolver(threads=8, ttl=60, cache_size=100, per_call=2)
+    names = [f"h{i}.example.org" for i in range(5)]
+    assert resolver.resolve(names, soon(0.05)) == {}
+    assert sorted(hang) == names[:2]

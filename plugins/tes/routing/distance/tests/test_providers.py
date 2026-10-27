@@ -373,26 +373,63 @@ def test_dbip_provider_books_turn_before_asking_dbip() -> None:
 
 def test_dbip_provider_waits_outside_the_lock() -> None:
     """A lookup waiting for its turn doesn't block others from booking."""
-    provider = make_dbip(interval=0.5)
+    clock = Clock()
+    waiting = threading.Event()
+    go_on = threading.Event()
+
+    def sleep(seconds: float) -> None:
+        """Signal the wait, then wait until the test lets it go on.
+
+        Args:
+            seconds: Duration.
+        """
+        waiting.set()
+        go_on.wait(5)
+        clock.sleep(seconds)
+
+    provider = DbipProvider(
+        DBIP, NOMINATIM, AGENT, 60, cache_size=0, clock=clock, sleep=sleep
+    )
     http = FakeHttp()
     for index in range(3):
         http.add("GET", f"{DBIP}/9.9.9.{index}", json=PLACE)
     http.add("GET", search_url("Zurich, Zurich CH"), json=[{"lat": 1, "lon": 2}])
     # the first lookup takes the first turn at once
-    provider.locate("9.9.9.0", make_context(http))
-    waiting = threading.Thread(
-        target=provider.locate, args=("9.9.9.1", make_context(http))
+    provider.locate("9.9.9.0", make_context(http, seconds=100))
+    second = threading.Thread(
+        target=provider.locate, args=("9.9.9.1", make_context(http, seconds=100))
     )
-    waiting.start()  # books the next turn, then waits about 0.5 s
-    time.sleep(0.05)
-    started = time.monotonic()
-    # a third turn would come after its deadline: it fails at once
-    with pytest.raises(LookupFailed, match="rate limit"):
-        provider.locate("9.9.9.2", make_context(http, seconds=0.2))
-    assert time.monotonic() - started < 0.3
-    waiting.join(5)
+    second.start()  # books the turn in 60 s, then waits for it
+    try:
+        assert waiting.wait(5)
+        # a third lookup can book while the second waits: its turn (in
+        # 120 s) comes after its deadline, so it fails at once
+        with pytest.raises(LookupFailed, match="rate limit") as failed:
+            provider.locate("9.9.9.2", make_context(http, seconds=100))
+        assert failed.value.transient
+    finally:
+        go_on.set()
+        second.join(5)
     # DB-IP and Nominatim for the first two; nothing for the third
     assert len(http.calls) == 4
+
+
+def test_dbip_provider_spends_turns_only_on_nominatim() -> None:
+    """Lookups that need no request to Nominatim take no turn of it."""
+    clock = Clock()
+    provider = make_dbip(clock, interval=1, cache_size=100)
+    http = FakeHttp()
+    for index in range(20):
+        http.add("GET", f"{DBIP}/9.9.9.{index}", json=PLACE)
+    http.add("GET", f"{DBIP}/1.1.1.1", json={"city": "", "countryCode": "CH"})
+    http.add("GET", search_url("Zurich, Zurich CH"), json=[{"lat": 1, "lon": 2}])
+    # a miss of DB-IP takes no turn
+    assert provider.locate("1.1.1.1", make_context(http, seconds=5)) is None
+    # 20 addresses in the same place: one request to Nominatim, no waits
+    for index in range(20):
+        assert provider.locate(f"9.9.9.{index}", make_context(http, seconds=5))
+    assert clock.slept == []
+    assert len(http.calls) == 22
 
 
 def test_dbip_provider_caches_places_and_coordinates() -> None:
@@ -492,6 +529,14 @@ def test_offline_provider_fails_if_closed_during_lookup(
     reader = provider._reader
 
     def get(address: str) -> Any:
+        """Close the provider, then read.
+
+        Args:
+            address: Address.
+
+        Returns:
+            Record of the address.
+        """
         provider.close()
         return reader.get(address)
 
