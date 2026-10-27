@@ -154,8 +154,11 @@ def test_plugin_class_is_valid() -> None:
     title, description = Distance.summary()
     assert title == "Route to the backends closest to the task's inputs."
     assert description.startswith("Ranks the candidate backends")
-    assert any("db-ip.com" in transfer for transfer in Distance.data_transfers)
-    assert any("Nominatim" in transfer for transfer in Distance.data_transfers)
+    recipients = [transfer.split(":")[0] for transfer in Distance.data_transfers]
+    assert recipients == [
+        "db-ip.com (api.db-ip.com)",
+        "OpenStreetMap Nominatim (or the instance the admin configures)",
+    ]
 
 
 def test_plugin_meets_contract(
