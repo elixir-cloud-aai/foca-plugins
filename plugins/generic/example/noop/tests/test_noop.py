@@ -1,8 +1,10 @@
 """Tests of the example plugin `generic.example.noop`.
 
-Unit tests call the hooks with a context of their own; the pipeline tests
-load the plugin through its installed entry point, as gateway apps do, and
-run it with FOCA's plugin engine. Copies of the template keep both kinds.
+Unit tests call the hooks with a context of their own; the other tests use
+FOCA's plugin test kit (`foca.plugins.testing`): the contract checks, a
+harness that runs the plugin through the real engine, and a pipeline that
+loads the plugin through its installed entry point, as gateway apps do.
+Copies of the template keep all of them, the contract test in particular.
 """
 
 from collections.abc import Iterator
@@ -10,20 +12,25 @@ from importlib.metadata import entry_points
 import time
 from typing import Any
 
-from foca.plugins import Backend, Context, InboundRequest, Principal
+from foca.plugins import Context, Principal
 from foca.plugins.base import check_plugin_class
 from foca.plugins.config import PluginsConfig
 from foca.plugins.engine import PluginHost
+from foca.plugins.testing import (
+    PluginHarness,
+    check_plugin_contract,
+    make_backend,
+    make_inbound,
+)
 from pydantic import BaseModel, ValidationError
 import pytest
 
 from foca_plugins.generic.example.noop import Noop, NoopConfig, NoopParams
 
 PLUGIN_ID = "generic.example.noop"
-BACKENDS = [
-    Backend(id="a", url="https://a.example.org"),
-    Backend(id="b", url="https://b.example.org"),
-]
+CONFIG = {"label": "gateway-1"}
+BACKENDS = [make_backend("a"), make_backend("b")]
+TASK = {"name": "task"}
 
 
 def make_context(params: BaseModel | None = None) -> Context:
@@ -47,17 +54,6 @@ def make_context(params: BaseModel | None = None) -> Context:
     )
 
 
-def make_inbound() -> InboundRequest:
-    """Build an inbound request.
-
-    Returns:
-        Request with a task as its payload.
-    """
-    return InboundRequest(
-        method="POST", path="/ga4gh/tes/v1/tasks", payload={"name": "task"}
-    )
-
-
 @pytest.fixture
 def plugin() -> Noop:
     """Create the plugin with a label.
@@ -78,7 +74,7 @@ def host() -> Iterator[PluginHost]:
     """
     conf = PluginsConfig.model_validate(
         {
-            "available": {PLUGIN_ID: {"config": {"label": "gateway-1"}}},
+            "available": {PLUGIN_ID: {"config": CONFIG}},
             "pipeline": [{"id": "noop", "alternatives": [{"plugin": PLUGIN_ID}]}],
         }
     )
@@ -139,10 +135,10 @@ def test_on_request_keeps_request(plugin: Noop) -> None:
     Args:
         plugin: Plugin.
     """
-    request = make_inbound()
+    request = make_inbound(TASK)
     ctx = make_context()
     plugin.on_request(request, ctx)
-    assert request == make_inbound()
+    assert request == make_inbound(TASK)
     assert ctx.annotations == {"label": "gateway-1"}
 
 
@@ -166,7 +162,7 @@ def test_hooks_record_nothing_if_disabled(plugin: Noop) -> None:
         plugin: Plugin.
     """
     ctx = make_context(NoopParams(record=False))
-    plugin.on_request(make_inbound(), ctx)
+    plugin.on_request(make_inbound(TASK), ctx)
     assert plugin.on_route(BACKENDS, ctx) == BACKENDS
     assert ctx.annotations == {}
 
@@ -178,7 +174,24 @@ def test_hooks_refuse_other_params(plugin: Noop) -> None:
         plugin: Plugin.
     """
     with pytest.raises(TypeError, match="Unexpected parameters"):
-        plugin.on_request(make_inbound(), make_context(NoopConfig()))
+        plugin.on_request(make_inbound(TASK), make_context(NoopConfig()))
+
+
+def test_plugin_meets_contract() -> None:
+    """The plugin passes FOCA's contract checks (class, metadata, hooks)."""
+    check_plugin_contract(Noop, config=CONFIG, plugin_id=PLUGIN_ID)
+
+
+def test_harness_runs_hooks() -> None:
+    """Through the engine, the hooks keep their inputs and record."""
+    harness = PluginHarness(
+        Noop, config=CONFIG, params={"record": True}, plugin_id=PLUGIN_ID
+    )
+    assert harness.run_route(BACKENDS, make_inbound(TASK)) == BACKENDS
+    assert [(e.phase, e.outcome, e.annotations) for e in harness.executions] == [
+        ("request", "ok", {"label": "gateway-1"}),
+        ("route", "ok", {"candidates": 2}),
+    ]
 
 
 def test_pipeline_runs_plugin(host: PluginHost) -> None:
@@ -187,8 +200,8 @@ def test_pipeline_runs_plugin(host: PluginHost) -> None:
     Args:
         host: Plugin host.
     """
-    run = host.start(make_inbound(), Principal(subject="alice"), request_id="r1")
-    assert run.request().payload == {"name": "task"}
+    run = host.start(make_inbound(TASK), Principal(subject="alice"), request_id="r1")
+    assert run.request().payload == TASK
     assert run.route(BACKENDS) == BACKENDS
     assert [(e.phase, e.outcome, e.annotations) for e in run.executions] == [
         ("request", "ok", {"label": "gateway-1"}),

@@ -1093,8 +1093,8 @@ wheels = [
 
 [[package]]
 name = "foca"
-version = "0.17.1.dev19+ga9bc8fe4f"
-source = { git = "https://github.com/elixir-cloud-aai/foca?branch=dev#a9bc8fe4fb93cefdd6c81554d49f304e8796af54" }
+version = "0.18.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "addict" },
     { name = "celery" },
@@ -1113,7 +1113,12 @@ dependencies = [
     { name = "pyyaml" },
     { name = "requests" },
     { name = "swagger-ui-bundle" },
+    { name = "urllib3" },
     { name = "werkzeug" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/45/86/17f0218c86d32ab0d4a6e8f0343a8510568a402c7aa6bf226cb32b19ab23/foca-0.18.0.tar.gz", hash = "sha256:b345181838a789599d33bab4163c98e3b4ace5009650c79afb45a2d80db4c9f3", size = 468292, upload-time = "2026-10-27T01:30:20.927Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/74/3d/59059968ccf18ca1d23110d4ce2bc3b17d010b3906ef3419c763cb9086e1/foca-0.18.0-py3-none-any.whl", hash = "sha256:e6381212f4dd39db2da7048ac175065c4a783ebb9ebe3a49dfd352accd6b9225", size = 264380, upload-time = "2026-10-27T01:30:19.194Z" },
 ]
 
 [[package]]
@@ -1127,7 +1132,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", git = "https://github.com/elixir-cloud-aai/foca?branch=dev" },
+    { name = "foca", specifier = ">=0.18.0,<0.19" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 
@@ -1140,7 +1145,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "foca", git = "https://github.com/elixir-cloud-aai/foca?branch=dev" }]
+requires-dist = [{ name = "foca", specifier = ">=0.18.0,<0.19" }]
 provides-extras = ["generic", "tes", "wes", "all", "experimental"]
 
 [[package]]

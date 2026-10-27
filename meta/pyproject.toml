@@ -30,8 +30,8 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 # The FOCA versions that the train was tested with; set in the release pull
-# request. TODO(FOCA 0.18.0): `>=0.18.0,<0.19`
-dependencies = ["foca>=0.17.1.dev0,<0.19"]
+# request
+dependencies = ["foca>=0.18.0,<0.19"]
 
 # Extras per group (`<group>`) and subgroup (`<group>-<subgroup>`), plus
 # `all` (stable plugins only) and `experimental` (experimental ones). Each

@@ -54,8 +54,7 @@ Development needs [uv](https://docs.astral.sh/uv/) (which installs a
 suitable Python, 3.11 or later, if needed) and Git. The repository root is a
 [uv workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/): one
 environment (`.venv/`) with every package installed in editable mode, plus
-the development tools (dependency group `dev`). FOCA comes from its `dev`
-branch until 0.18.0 is released.
+the development tools (dependency group `dev`).
 
 ```bash
 git clone https://github.com/elixir-cloud-aai/foca-plugins.git

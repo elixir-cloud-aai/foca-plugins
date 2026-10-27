@@ -52,13 +52,10 @@ template of all FOCA repositories, and the setup tasks that are still open.
    first real tag. Check especially the tag patterns, the notes of the
    GitHub release, the attestations and the `pypi` environment's tag rule
    (it must allow `foca-plugin*-v*`).
-5. **FOCA 0.18.0:** once released, resolve the `TODO(FOCA 0.18.0)` comments:
-   remove the Git source of FOCA (`tool.uv.sources` in the root
-   `pyproject.toml`), raise the lower bounds to `foca>=0.18.0`, add 0.18.0 to
-   the FOCA axis of the test matrix (`ci.yml`), and let Dependabot update
-   FOCA again (`.github/dependabot.yml`). Add FOCA's contract tests
-   (`-p foca.plugins.testing.contract`) to CI once FOCA ships its plugin
-   test kit.
+5. **New FOCA minor versions:** the plugins declare `foca>=0.18.0,<0.19`.
+   When FOCA releases 0.19.0 (Dependabot proposes it), test the plugins
+   against it, raise the upper bounds and the lowest FOCA of the test matrix
+   (`ci.yml`) as needed, and release the plugins whose range changed.
 6. **Pinned tools that Dependabot doesn't bump:** the uv version
    (`UV_VERSION` in `ci.yml` and `release.yml`; Dependabot bumps the
    `astral-sh/setup-uv` action itself), the build backend

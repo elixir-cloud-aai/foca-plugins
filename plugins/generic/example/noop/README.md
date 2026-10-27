@@ -16,7 +16,7 @@ and is **not published**.
 | Phases | `request`, `route` |
 | Maturity | experimental |
 | Data transfers | none |
-| FOCA | `dev` branch (0.18.0 once released) |
+| FOCA | 0.18 (`>=0.18.0,<0.19`) |
 
 ## What it does
 

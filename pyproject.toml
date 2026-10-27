@@ -19,15 +19,6 @@ default-groups = ["dev"]
 # update by hand
 build-constraint-dependencies = ["setuptools==84.2.1"]
 
-[tool.uv.sources]
-# TODO(FOCA 0.18.0): the plugin engine (`foca.plugins`) is on FOCA's `dev`
-# branch only. Once FOCA 0.18.0 is released, remove this source, so that
-# FOCA comes from PyPI, raise the lower bound of `foca` in every plugin to
-# `>=0.18.0`, and add 0.18.0 as the lowest FOCA to the test matrix of
-# `.github/workflows/ci.yml` (see "Compatibility" in `docs/writing-plugins.md`).
-# The packages that the release workflow publishes don't contain this source
-foca = { git = "https://github.com/elixir-cloud-aai/foca", branch = "dev" }
-
 [dependency-groups]
 # Local hooks of `.pre-commit-config.yaml` and CI use these too
 dev = [

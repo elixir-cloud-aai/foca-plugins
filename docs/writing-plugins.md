@@ -115,21 +115,31 @@ uv run coverage run --source plugins/tes/routing/distance/src \
 uv run coverage report
 ```
 
-The template's tests show both kinds of tests: unit tests that call the
-hooks with a `Context` of their own, and a pipeline test that loads the
-plugin through its installed entry point with FOCA's `PluginHost`, as
-gateway apps do. FOCA's plugin test kit (`foca.plugins.testing`, with
-contract tests) will replace parts of them once it is released.
+The template's tests show the kinds of tests that every plugin keeps:
+
+- unit tests that call the hooks with a `Context` of their own;
+- FOCA's contract checks (`check_plugin_contract` of FOCA's plugin test
+  kit, `foca.plugins.testing`), with admin settings and sample inputs that
+  make the hooks run: the class, its metadata and settings models, no
+  framework imports, and hook calls through the engine, once and from
+  several threads;
+- tests through the engine with the kit's `PluginHarness` (and its
+  `FakeHttp` for `ctx.http`, its builders such as `make_inbound()` and
+  `make_backend()`);
+- a pipeline test that loads the plugin through its installed entry point
+  with FOCA's `PluginHost`, as gateway apps do.
+
+See "Testing plugins" on FOCA's [plugins
+page](https://foca.readthedocs.io/en/latest/plugins/#testing-plugins).
 
 ## Compatibility
 
 CI tests each plugin with the lowest and highest Python versions that FOCA
 supports and the default one (3.11, 3.13, 3.15), and with the lowest and
-highest supported FOCA versions. Until FOCA 0.18.0 is released, that is
-FOCA's `dev` branch only, from Git (`tool.uv.sources` in the root
-`pyproject.toml`); the published distributions name FOCA by version only.
-Once 0.18.0 is released, the lower bound of every plugin becomes `>=0.18.0`
-and CI tests 0.18.0, too.
+highest FOCA versions: 0.18.0, the first release with the plugin API (the
+lower bound of every plugin, `foca>=0.18.0`), and FOCA's `dev` branch, from
+Git, so that changes of the plugin API show before FOCA releases them. The
+development environment has the newest FOCA release (`uv.lock`).
 
 ## Changes and releases
 

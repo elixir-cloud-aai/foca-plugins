@@ -46,9 +46,9 @@ classifiers = [
     # <<< template only
 ]
 dependencies = [
-    # TODO(FOCA 0.18.0): `>=0.18.0` once released; FOCA's `dev` branch
-    # reports 0.17.1.devN (cf. `tool.uv.sources` of the root `pyproject.toml`)
-    "foca>=0.17.1.dev0,<0.19",
+    # The plugin API of FOCA 0.18 (`foca.plugins`); raise the upper bound once
+    # CI has tested the next minor version
+    "foca>=0.18.0,<0.19",
     "pydantic>=2.7,<3",
 ]
 
