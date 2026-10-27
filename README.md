@@ -82,11 +82,12 @@ distributions.
 
 ## Contributing
 
-Contributions are welcome! See [`CONTRIBUTING.md`](CONTRIBUTING.md) and
-[Contributing][docs-contributing] in the documentation, and mind our [code of
-conduct](CODE_OF_CONDUCT.md). To start a plugin, run
+Contributions are welcome! See [Contributing][docs-contributing] in the
+documentation and the organisation's [contributing guide][contributing], and
+mind our [code of conduct][code-of-conduct]. To start a plugin, run
 `python scripts/new_plugin.py <group> <subgroup> <name>` (see [Writing a
-plugin][docs-writing]).
+plugin][docs-writing]). Maintainers find the repository's settings and the
+open setup tasks in [`MAINTAINERS.md`](MAINTAINERS.md).
 
 [badge-build-status]: <https://github.com/elixir-cloud-aai/foca-plugins/actions/workflows/ci.yml/badge.svg?branch=dev>
 [badge-coverage]: <https://codecov.io/gh/elixir-cloud-aai/foca-plugins/branch/dev/graph/badge.svg?branch=dev>
@@ -96,6 +97,8 @@ plugin][docs-writing]).
 [badge-url-coverage]: <https://codecov.io/gh/elixir-cloud-aai/foca-plugins?branch=dev>
 [badge-url-docs]: <https://foca-plugins.readthedocs.io/en/latest/>
 [badge-url-license]: <https://www.apache.org/licenses/LICENSE-2.0>
+[code-of-conduct]: <https://github.com/elixir-cloud-aai/.github/blob/main/CODE_OF_CONDUCT.md>
+[contributing]: <https://github.com/elixir-cloud-aai/.github/blob/main/CONTRIBUTING.md>
 [docs]: <https://foca-plugins.readthedocs.io/en/latest/>
 [docs-contributing]: <https://foca-plugins.readthedocs.io/en/latest/contributing/>
 [docs-installing]: <https://foca-plugins.readthedocs.io/en/latest/installing/>
