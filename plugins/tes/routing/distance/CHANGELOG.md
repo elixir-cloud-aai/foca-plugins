@@ -15,4 +15,4 @@ in the docs).
   closest to their inputs, with locations from the backend list, a local
   GeoIP database (default) or, as an opt-in, DB-IP and Nominatim; name
   resolution bounded in time and threads, lookups cached per process
-  (#8).
+  (#8, #13).
