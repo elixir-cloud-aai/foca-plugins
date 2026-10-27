@@ -119,10 +119,12 @@ The template's tests show the kinds of tests that every plugin keeps:
 
 - unit tests that call the hooks with a `Context` of their own;
 - FOCA's contract checks (`check_plugin_contract` of FOCA's plugin test
-  kit, `foca.plugins.testing`), with admin settings and sample inputs that
-  make the hooks run: the class, its metadata and settings models, no
-  framework imports, and hook calls through the engine, once and from
-  several threads;
+  kit, `foca.plugins.testing`): the class, its metadata and settings
+  models, no framework imports, and hook calls through the engine, once and
+  from several threads. The template passes its admin settings only; pass
+  sample inputs (`inbound=`, `candidates=`, `response=`, `http=`) that make
+  your plugin's hooks do their work, and `api=` for plugins of other APIs
+  than TES;
 - tests through the engine with the kit's `PluginHarness` (and its
   `FakeHttp` for `ctx.http`, its builders such as `make_inbound()` and
   `make_backend()`);
@@ -135,8 +137,8 @@ page](https://foca.readthedocs.io/en/latest/plugins/#testing-plugins).
 ## Compatibility
 
 CI tests each plugin with the lowest and highest Python versions that FOCA
-supports and the default one (3.11, 3.13, 3.15), and with the lowest and
-highest FOCA versions: 0.18.0, the first release with the plugin API (the
+supports and the default one (3.11, 3.13, 3.15), and with the lowest
+supported FOCA version, 0.18.0, the first release with the plugin API (the
 lower bound of every plugin, `foca>=0.18.0`), and FOCA's `dev` branch, from
 Git, so that changes of the plugin API show before FOCA releases them. The
 development environment has the newest FOCA release (`uv.lock`).

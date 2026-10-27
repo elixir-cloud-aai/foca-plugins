@@ -132,6 +132,8 @@ jobs:
         include:
           - foca: "0.18.0"
             foca-spec: "foca==0.18.0"
+            # The entry that reports coverage (with the default Python)
+            coverage: true
           - foca: dev
             foca-spec: "foca @ git+https://github.com/elixir-cloud-aai/foca@dev"
     env:
@@ -148,8 +150,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       # Only this plugin and its dependencies (from `uv.lock`), so that it
       # can't rely on those of other plugins, then the FOCA version of the
-      # entry (the locked one is the newest release; `dev` is its current
-      # head, from Git)
+      # entry, which replaces the locked one (for `dev`, its current head,
+      # from Git)
       # The uv version's checksum is verified by the action
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -169,9 +171,9 @@ jobs:
           ast-grep scan "${PACKAGE}"
       - name: Check types
         run: python -m scripts.packages mypy "${PACKAGE}"
-      # Include FOCA's plugin contract checks: every plugin's tests call
-      # `check_plugin_contract` (the `plugin_contract` fixture of
-      # `foca.plugins.pytest_plugin`), as those of the template do
+      # The plugins' own tests include FOCA's plugin contract checks
+      # (`check_plugin_contract` of `foca.plugins.testing`), as the
+      # template's do; this step doesn't add them
       - name: Run tests
         run: |
           coverage run --source "${PACKAGE}/src" -m pytest "${PACKAGE}"
@@ -182,7 +184,7 @@ jobs:
       # only on pushes, because pull requests from forks and Dependabot get no
       # access to the Codecov token
       - name: Submit report to Codecov
-        if: ${{ matrix.python-version == '3.13' && matrix.foca == '0.18.0' }}
+        if: ${{ matrix.python-version == '3.13' && matrix.coverage }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

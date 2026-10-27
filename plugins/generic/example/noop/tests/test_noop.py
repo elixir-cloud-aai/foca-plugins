@@ -30,7 +30,18 @@ from foca_plugins.generic.example.noop import Noop, NoopConfig, NoopParams
 PLUGIN_ID = "generic.example.noop"
 CONFIG = {"label": "gateway-1"}
 BACKENDS = [make_backend("a"), make_backend("b")]
-TASK = {"name": "task"}
+
+
+def make_task() -> dict[str, Any]:
+    """Build a task, new for each use, so that tests share no payload.
+
+    A hook that changed a shared payload in place would change the expected
+    value, too, and comparisons would pass however the hook behaved.
+
+    Returns:
+        Task.
+    """
+    return {"name": "task"}
 
 
 def make_context(params: BaseModel | None = None) -> Context:
@@ -135,10 +146,10 @@ def test_on_request_keeps_request(plugin: Noop) -> None:
     Args:
         plugin: Plugin.
     """
-    request = make_inbound(TASK)
+    request = make_inbound(make_task())
     ctx = make_context()
     plugin.on_request(request, ctx)
-    assert request == make_inbound(TASK)
+    assert request == make_inbound(make_task())
     assert ctx.annotations == {"label": "gateway-1"}
 
 
@@ -162,7 +173,7 @@ def test_hooks_record_nothing_if_disabled(plugin: Noop) -> None:
         plugin: Plugin.
     """
     ctx = make_context(NoopParams(record=False))
-    plugin.on_request(make_inbound(TASK), ctx)
+    plugin.on_request(make_inbound(make_task()), ctx)
     assert plugin.on_route(BACKENDS, ctx) == BACKENDS
     assert ctx.annotations == {}
 
@@ -174,7 +185,7 @@ def test_hooks_refuse_other_params(plugin: Noop) -> None:
         plugin: Plugin.
     """
     with pytest.raises(TypeError, match="Unexpected parameters"):
-        plugin.on_request(make_inbound(TASK), make_context(NoopConfig()))
+        plugin.on_request(make_inbound(make_task()), make_context(NoopConfig()))
 
 
 def test_plugin_meets_contract() -> None:
@@ -183,11 +194,15 @@ def test_plugin_meets_contract() -> None:
 
 
 def test_harness_runs_hooks() -> None:
-    """Through the engine, the hooks keep their inputs and record."""
+    """Through the engine, the hooks keep their inputs and record.
+
+    Shows FOCA's `PluginHarness`, which runs the plugin class directly (no
+    entry point), with the kit's fake `ctx.http`.
+    """
     harness = PluginHarness(
         Noop, config=CONFIG, params={"record": True}, plugin_id=PLUGIN_ID
     )
-    assert harness.run_route(BACKENDS, make_inbound(TASK)) == BACKENDS
+    assert harness.run_route(BACKENDS, make_inbound(make_task())) == BACKENDS
     assert [(e.phase, e.outcome, e.annotations) for e in harness.executions] == [
         ("request", "ok", {"label": "gateway-1"}),
         ("route", "ok", {"candidates": 2}),
@@ -200,8 +215,10 @@ def test_pipeline_runs_plugin(host: PluginHost) -> None:
     Args:
         host: Plugin host.
     """
-    run = host.start(make_inbound(TASK), Principal(subject="alice"), request_id="r1")
-    assert run.request().payload == TASK
+    run = host.start(
+        make_inbound(make_task()), Principal(subject="alice"), request_id="r1"
+    )
+    assert run.request().payload == make_task()
     assert run.route(BACKENDS) == BACKENDS
     assert [(e.phase, e.outcome, e.annotations) for e in run.executions] == [
         ("request", "ok", {"label": "gateway-1"}),
