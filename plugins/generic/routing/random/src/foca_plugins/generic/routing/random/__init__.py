@@ -38,11 +38,10 @@ class RandomParams(BaseModel):
     """Parameters of the plugin in a pipeline step.
 
     Attributes:
-        seed: Seed of the shuffling, for reproducible orders in tests;
-            an integer (no booleans, floats or strings); refused unless
-            `allow_seed` is set. Without a seed, the order
-            comes from the operating system's randomness
-            (`random.SystemRandom`).
+        seed: Seed of the shuffling, for reproducible orders in tests; an
+            integer (no booleans, floats or strings), refused unless
+            `allow_seed` is set. Without a seed, the order comes from the
+            operating system's randomness (`random.SystemRandom`).
     """
 
     model_config = ConfigDict(extra="forbid")
