@@ -12,4 +12,4 @@ in the docs).
 ### Features
 
 - Add the plugin `generic.routing.random`: routes to the candidate backends
-  in random order, optionally seeded for tests (#7).
+  in random order, optionally seeded for tests (#7, #12).
