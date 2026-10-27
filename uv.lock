@@ -9,6 +9,7 @@ resolution-markers = [
 [manifest]
 members = [
     "foca-plugin-generic-example-noop",
+    "foca-plugin-generic-routing-random",
     "foca-plugins",
 ]
 build-constraints = [{ name = "setuptools", specifier = "==84.2.1" }]
@@ -1125,6 +1126,21 @@ wheels = [
 name = "foca-plugin-generic-example-noop"
 version = "0.1.0"
 source = { editable = "plugins/generic/example/noop" }
+dependencies = [
+    { name = "foca" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "foca", specifier = ">=0.18.0,<0.19" },
+    { name = "pydantic", specifier = ">=2.7,<3" },
+]
+
+[[package]]
+name = "foca-plugin-generic-routing-random"
+version = "0.1.0"
+source = { editable = "plugins/generic/routing/random" }
 dependencies = [
     { name = "foca" },
     { name = "pydantic" },
