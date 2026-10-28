@@ -7,7 +7,10 @@ Features, Security, Fixes, Documentation, Maintenance; empty ones left
 out), each entry with its issue and pull request numbers (see "Releasing"
 in the docs).
 
-## Unreleased
+## 0.1.0
+
+First release of the plugin: routing to the candidate backends in random
+order.
 
 ### Features
 

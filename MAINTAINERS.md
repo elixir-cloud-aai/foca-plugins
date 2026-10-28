@@ -47,11 +47,11 @@ template of all FOCA repositories, and the setup tasks that are still open.
     - `foca-plugin-tes-routing-distance`
     - `foca-plugin-tes-policy-allowed-images`
     - `foca-plugin-tes-data-crypt4gh` (deferred)
-4. **First release:** dry-run the release workflow (an untested draft) end
-   to end in a fork, on a test tag, publishing to TestPyPI, before the
-   first real tag. Check especially the tag patterns, the notes of the
-   GitHub release, the attestations and the `pypi` environment's tag rule
-   (it must allow `foca-plugin*-v*`).
+4. **First release:** the release workflow passed a dry run end to end in
+   a fork (`uniqueg/foca-plugins`, tags `*-v0.1.0.dev1` on TestPyPI). Before
+   the first real tag, check the `pypi` environment's required reviewers
+   and tag rule (it must allow `foca-plugin*-v*`), and the tag ruleset
+   (item 7).
 5. **New FOCA minor versions:** the plugins currently declare
    `foca>=0.18.0,<0.19` (each in its own `pyproject.toml`). When FOCA
    releases 0.19.0 (Dependabot proposes it), test the plugins against it,
