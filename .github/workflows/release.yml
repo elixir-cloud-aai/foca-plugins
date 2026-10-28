@@ -108,14 +108,15 @@ jobs:
           enable-cache: false
       # The build backend is pinned (`build-constraint-dependencies` in the
       # root `pyproject.toml`). The commit's time as the build time makes the
-      # wheels reproducible
+      # wheels reproducible. No `.gitignore` in `dist/` (uv writes one by
+      # default), which would be uploaded and fail the checks (as in `ci.yml`)
       - name: Build distributions
         env:
           NAME: ${{ steps.package.outputs.name }}
         run: |
           SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           export SOURCE_DATE_EPOCH
-          uv build --package "${NAME}" --out-dir dist
+          uv build --package "${NAME}" --out-dir dist --no-create-gitignore
       # twine from `uv.lock` (dependency group `release`), with hashes
       - name: Check distributions
         env:

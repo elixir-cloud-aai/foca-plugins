@@ -15,7 +15,8 @@ Commands, run from the repository root as `python -m scripts.checks
 - `dist DIR` (`ci.yml`, job `lint`, and `release.yml`): the wheels in a
   directory (e.g., of `uv build --all-packages`): each of a package of the
   repository, of its version, with its license, its `py.typed` and only its
-  own module (no files of the namespace packages).
+  own module (no files of the namespace packages); the directory holds
+  nothing but wheels and sdists (e.g., no `.gitignore` of `uv build`).
 """
 
 import argparse
@@ -304,10 +305,14 @@ def check_dist(directory: Path, root: Path = ROOT) -> list[str]:
         Problems found, each prefixed with the wheel's file name.
     """
     known = {_normalize(package.name): package for package in discover(root)}
+    problems = [
+        f"{path.name}: neither a wheel nor an sdist"
+        for path in (sorted(directory.iterdir()) if directory.is_dir() else [])
+        if not (path.is_file() and path.name.endswith((".whl", ".tar.gz")))
+    ]
     wheels = sorted(directory.glob("*.whl"))
     if not wheels:
-        return [f"{directory}: no wheels"]
-    problems: list[str] = []
+        return [*problems, f"{directory}: no wheels"]
     for wheel in wheels:
         name, version = wheel.name.split("-")[:2]
         package = known.get(name)

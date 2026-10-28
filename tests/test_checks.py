@@ -263,6 +263,7 @@ def test_check_dist(repo: Path) -> None:
     )
     meta = "foca_plugins-2026.10.0.dev0"
     make_wheel(dist, f"{meta}-py3-none-any.whl", [f"{meta}.dist-info/licenses/LICENSE"])
+    (dist / f"{meta}.tar.gz").write_bytes(b"")
     assert checks.check_dist(dist, repo) == []
 
 
@@ -281,8 +282,13 @@ def test_check_dist_problems(repo: Path) -> None:
         ["foca_plugins/__init__.py", f"{noop}.dist-info/METADATA"],
     )
     make_wheel(dist, "other-1.0-py3-none-any.whl", [])
+    # As `uv build` writes without `--no-create-gitignore`
+    (dist / ".gitignore").write_text("*\n")
+    (dist / "build").mkdir()
     name = f"{noop}-py3-none-any.whl"
     assert checks.check_dist(dist, repo) == [
+        ".gitignore: neither a wheel nor an sdist",
+        "build: neither a wheel nor an sdist",
         f"{name}: version is not '0.1.0'",
         f"{name}: unexpected files: foca_plugins/__init__.py",
         f"{name}: LICENSE is missing",
