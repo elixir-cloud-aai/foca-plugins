@@ -6,8 +6,11 @@ API](https://github.com/ga4gh/task-execution-schemas), such as proTES
 the locations of a task's inputs, decrypt Crypt4GH inputs in an extra
 executor, or allow only executor images of listed registries.
 
-Subgroups, with their plugins as `<subgroup>/<name>/`: none yet. Planned
-are, e.g., `routing/distance` (by the distance of inputs to backends) and
-`policy/allowed-images`.
+Subgroups, with their plugins as `<subgroup>/<name>/`:
+
+- `routing/`: [`distance`](routing/distance/), routing by the distance of
+  a task's inputs to the backends.
+
+Planned are, e.g., `policy/allowed-images`.
 
 See [`plugins/README.md`](../README.md) for the groups and subgroups.
