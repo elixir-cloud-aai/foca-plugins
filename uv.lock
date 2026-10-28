@@ -1180,9 +1180,35 @@ dependencies = [
     { name = "foca" },
 ]
 
+[package.optional-dependencies]
+experimental = [
+    { name = "foca-plugin-generic-routing-random" },
+    { name = "foca-plugin-tes-routing-distance" },
+]
+generic = [
+    { name = "foca-plugin-generic-routing-random" },
+]
+generic-routing = [
+    { name = "foca-plugin-generic-routing-random" },
+]
+tes = [
+    { name = "foca-plugin-tes-routing-distance" },
+]
+tes-routing = [
+    { name = "foca-plugin-tes-routing-distance" },
+]
+
 [package.metadata]
-requires-dist = [{ name = "foca", specifier = ">=0.18.0,<0.19" }]
-provides-extras = ["generic", "tes", "wes", "all", "experimental"]
+requires-dist = [
+    { name = "foca", specifier = ">=0.18.0,<0.19" },
+    { name = "foca-plugin-generic-routing-random", marker = "extra == 'experimental'", editable = "plugins/generic/routing/random" },
+    { name = "foca-plugin-generic-routing-random", marker = "extra == 'generic'", editable = "plugins/generic/routing/random" },
+    { name = "foca-plugin-generic-routing-random", marker = "extra == 'generic-routing'", editable = "plugins/generic/routing/random" },
+    { name = "foca-plugin-tes-routing-distance", marker = "extra == 'experimental'", editable = "plugins/tes/routing/distance" },
+    { name = "foca-plugin-tes-routing-distance", marker = "extra == 'tes'", editable = "plugins/tes/routing/distance" },
+    { name = "foca-plugin-tes-routing-distance", marker = "extra == 'tes-routing'", editable = "plugins/tes/routing/distance" },
+]
+provides-extras = ["generic", "generic-routing", "tes", "tes-routing", "wes", "all", "experimental"]
 
 [[package]]
 name = "frozenlist"

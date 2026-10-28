@@ -38,15 +38,20 @@ dependencies = ["foca>=0.18.0,<0.19"]
 # entry pins an exact version, e.g., `"foca-plugin-tes-routing-distance==1.2.0"`,
 # and is listed in its subgroup, its group, and in `all` or `experimental`
 # (`python -m scripts.checks check` checks this). A subgroup's extra is
-# added with its first plugin. They are empty until the first plugins are
-# released; the example plugin `generic.example.noop` is never published,
-# so it is in no extra
+# added with its first plugin. Extras without released plugins are empty;
+# the example plugin `generic.example.noop` is never published, so it is in
+# no extra
 [project.optional-dependencies]
-generic = []
-tes = []
+generic = ["foca-plugin-generic-routing-random==0.1.0"]
+generic-routing = ["foca-plugin-generic-routing-random==0.1.0"]
+tes = ["foca-plugin-tes-routing-distance==0.1.0"]
+tes-routing = ["foca-plugin-tes-routing-distance==0.1.0"]
 wes = []
 all = []
-experimental = []
+experimental = [
+    "foca-plugin-generic-routing-random==0.1.0",
+    "foca-plugin-tes-routing-distance==0.1.0",
+]
 
 # The plugins that the extras may pin come from the workspace: uv refuses
 # workspace members as dependencies without these entries. Add a plugin's
