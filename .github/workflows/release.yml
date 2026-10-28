@@ -107,9 +107,8 @@ jobs:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
       # The build backend is pinned (`build-constraint-dependencies` in the
-      # root `pyproject.toml`). The published distributions name FOCA by
-      # version only: the Git source (`tool.uv.sources`) is for development.
-      # The commit's time as the build time makes the wheels reproducible
+      # root `pyproject.toml`). The commit's time as the build time makes the
+      # wheels reproducible
       - name: Build distributions
         env:
           NAME: ${{ steps.package.outputs.name }}

@@ -11,10 +11,6 @@ updates:
       interval: monthly
     target-branch: dev
     versioning-strategy: increase-if-necessary
-    ignore:
-      # FOCA comes from its `dev` branch until 0.18.0 is released (see
-      # `tool.uv.sources` in `pyproject.toml`); its bounds are raised by hand
-      - dependency-name: foca
     groups:
       # Dependencies of the documentation (the `docs` group), in pull
       # requests of their own

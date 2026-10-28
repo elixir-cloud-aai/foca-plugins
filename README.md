@@ -29,9 +29,8 @@ repositories work the same way.
 <!-- --8<-- [end:synopsis] -->
 
 <!-- --8<-- [start:status] -->
-**Status:** the plugin API is new in FOCA 0.18.0, which is not released yet:
-the packages of this repository use FOCA's `dev` branch until then, and no
-plugins have been released. The only plugin so far is the example
+**Status:** the plugin API is new in FOCA 0.18.0; no plugins have been
+released yet. The only plugin so far is the example
 `generic.example.noop`, the template of new plugins.
 <!-- --8<-- [end:status] -->
 

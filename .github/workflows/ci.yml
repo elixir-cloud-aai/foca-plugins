@@ -112,10 +112,11 @@ jobs:
   # One entry per affected plugin, Python version and FOCA version. Python:
   # the lowest and highest versions that FOCA declares and tests (3.11 and
   # 3.15, its `requires-python` and classifiers), and the default (3.13, the
-  # newest in its security phase), which reports coverage; all gate, as in
-  # FOCA. FOCA: meant to be the lowest and highest supported versions, but
-  # currently FOCA `dev` only (TODO(FOCA 0.18.0): add `0.18.0` as
-  # `foca-spec: foca==0.18.0`, and keep `dev`)
+  # newest in its security phase), which reports coverage with the entry
+  # marked `coverage`; all gate, as in FOCA. FOCA: the lowest supported
+  # version (0.18.0, the first with the plugin API) and FOCA's `dev` branch,
+  # so that changes of the plugin API show before FOCA releases them (raise
+  # the lowest version with the plugins' lower bounds)
   test:
     name: Test (${{ matrix.package.name }}, Python ${{ matrix.python-version }}, FOCA ${{ matrix.foca }})
     needs: changes
@@ -127,8 +128,12 @@ jobs:
       matrix:
         package: ${{ fromJSON(needs.changes.outputs.packages) }}
         python-version: ["3.11", "3.13", "3.15"]
-        foca: [dev]
+        foca: ["0.18.0", dev]
         include:
+          - foca: "0.18.0"
+            foca-spec: "foca==0.18.0"
+            # The entry that reports coverage (with the default Python)
+            coverage: true
           - foca: dev
             foca-spec: "foca @ git+https://github.com/elixir-cloud-aai/foca@dev"
     env:
@@ -145,7 +150,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       # Only this plugin and its dependencies (from `uv.lock`), so that it
       # can't rely on those of other plugins, then the FOCA version of the
-      # entry (for `dev`, its current head rather than the locked commit)
+      # entry, which replaces the locked one (for `dev`, its current head,
+      # from Git)
       # The uv version's checksum is verified by the action
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -165,8 +171,9 @@ jobs:
           ast-grep scan "${PACKAGE}"
       - name: Check types
         run: python -m scripts.packages mypy "${PACKAGE}"
-      # TODO(FOCA plugin test kit): add FOCA's contract tests
-      # (`-p foca.plugins.testing.contract`) once FOCA ships them
+      # The plugins' own tests include FOCA's plugin contract checks
+      # (`check_plugin_contract` of `foca.plugins.testing`), as the
+      # template's do; this step doesn't add them
       - name: Run tests
         run: |
           coverage run --source "${PACKAGE}/src" -m pytest "${PACKAGE}"
@@ -177,7 +184,7 @@ jobs:
       # only on pushes, because pull requests from forks and Dependabot get no
       # access to the Codecov token
       - name: Submit report to Codecov
-        if: ${{ matrix.python-version == '3.13' }}
+        if: ${{ matrix.python-version == '3.13' && matrix.coverage }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -186,8 +193,6 @@ jobs:
           fail_ci_if_error: ${{ github.event_name == 'push' }}
           verbose: true
       # Known vulnerabilities of the plugin's runtime dependencies, as locked
-      # (URL requirements, e.g., FOCA from Git, can't be audited and are
-      # listed as skipped)
       - name: Audit dependencies
         run: |
           uv export --frozen --package "${NAME}" --no-emit-workspace --no-default-groups \
