@@ -6,7 +6,7 @@ import pytest
 
 from scripts import checks, new_plugin
 from scripts.packages import NAME_PATTERN
-from tests.helpers import NOOP, make_wheel, replace, set_extras
+from tests.helpers import DISTANCE, NOOP, make_wheel, replace, set_extras
 
 
 def test_check_passes(repo: Path) -> None:
@@ -150,32 +150,53 @@ def test_check_meta_requires_released(repo: Path) -> None:
     assert checks.check(repo) == [f"meta: {name} has an unknown maturity 'beta'"]
 
 
-def test_check_meta_sources(repo: Path) -> None:
+SOURCE = f"{DISTANCE.name} = {{ workspace = true }}"
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        # No entry
+        (f"{SOURCE}\n", ""),
+        # Another source
+        (SOURCE, f'{DISTANCE.name} = {{ path = "x" }}'),
+        # No table `[tool.uv.sources]`
+        ("[tool.uv.sources]\n", "[tool.other]\n"),
+    ],
+)
+def test_check_meta_sources(repo: Path, old: str, new: str) -> None:
     """Pinned plugins need a workspace source in the meta distribution.
 
     Args:
         repo: Repository root.
+        old: Text of `meta/pyproject.toml` to replace.
+        new: Replacement.
     """
-    target = new_plugin.create("tes", "routing", "distance", repo)
-    release(target)
-    name = "foca-plugin-tes-routing-distance"
-    pin = f'["{name}==0.1.0"]'
+    release(new_plugin.create("tes", "routing", "distance", repo))
+    pin = f'["{DISTANCE.name}==0.1.0"]'
     set_extras(repo, f"tes = {pin}\ntes-routing = {pin}\nexperimental = {pin}")
-    path = repo / "meta" / "pyproject.toml"
-    source = f"{name} = {{ workspace = true }}\n"
-    replace(path, source, "")
-    problem = (
-        f"meta: {name} is pinned, but [tool.uv.sources] has no"
-        f" `{name} = {{ workspace = true }}`"
-    )
-    assert checks.check(repo) == [problem]
+    assert checks.check(repo) == []
+    replace(repo / "meta" / "pyproject.toml", old, new)
+    assert checks.check(repo) == [
+        f"meta: {DISTANCE.name} is pinned, but [tool.uv.sources] has no `{SOURCE}`"
+    ]
+
+
+def test_check_meta_sources_as_uv(repo: Path) -> None:
+    """Sources count as uv reads them: names normalized, other keys allowed.
+
+    Args:
+        repo: Repository root.
+    """
+    release(new_plugin.create("tes", "routing", "distance", repo))
+    pin = f'["{DISTANCE.name}==0.1.0"]'
+    set_extras(repo, f"tes = {pin}\ntes-routing = {pin}\nexperimental = {pin}")
     replace(
-        path, "[tool.uv.sources]\n", f'[tool.uv.sources]\n{name} = {{ path = "x" }}\n'
+        repo / "meta" / "pyproject.toml",
+        SOURCE,
+        "Foca_Plugin_TES-routing__distance = { workspace = true, editable = false }",
     )
-    assert checks.check(repo) == [problem]
-    # No sources at all
-    replace(path, "[tool.uv.sources]\n", "[tool.other]\n")
-    assert checks.check(repo) == [problem]
+    assert checks.check(repo) == []
 
 
 @pytest.mark.parametrize(
@@ -312,11 +333,15 @@ def test_check_dist_problems(repo: Path) -> None:
     make_wheel(dist, "other-1.0-py3-none-any.whl", [])
     # As `uv build` writes without `--no-create-gitignore`
     (dist / ".gitignore").write_text("*\n")
+    (dist / f"{noop}.tar.gz").write_bytes(b"")
+    (dist / "other-1.0.tar.gz").write_bytes(b"")
     (dist / "build").mkdir()
     name = f"{noop}-py3-none-any.whl"
     assert checks.check_dist(dist, repo) == [
         ".gitignore: neither a wheel nor an sdist",
         "build: neither a wheel nor an sdist",
+        f"{noop}.tar.gz: version is not '0.1.0'",
+        "other-1.0.tar.gz: no package of this repository",
         f"{name}: version is not '0.1.0'",
         f"{name}: unexpected files: foca_plugins/__init__.py",
         f"{name}: LICENSE is missing",

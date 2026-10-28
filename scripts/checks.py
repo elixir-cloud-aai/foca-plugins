@@ -14,11 +14,12 @@ Commands, run from the repository root as `python -m scripts.checks
   (the `maturity` of its class), and every pinned plugin has the source
   `{ workspace = true }` in the meta distribution's `[tool.uv.sources]`
   (without it, uv refuses the workspace).
-- `dist DIR` (`ci.yml`, job `lint`, and `release.yml`): the wheels in a
-  directory (e.g., of `uv build --all-packages`): each of a package of the
+- `dist DIR` (`ci.yml`, job `lint`, and `release.yml`): the distributions
+  in a directory (e.g., of `uv build --all-packages`): each of a package of the
   repository, of its version, with its license, its `py.typed` and only its
   own module (no files of the namespace packages); the directory holds
-  nothing but wheels and sdists (e.g., no `.gitignore` of `uv build`).
+  nothing but these wheels and sdists of the packages at their versions
+  (e.g., no `.gitignore` of `uv build`).
 """
 
 import argparse
@@ -202,7 +203,14 @@ def _check_meta(
         problems.append(f"distribution is {package.name!r}, expected {META_NAME!r}")
     pyproject = load_pyproject(directory / "pyproject.toml")
     meta = pyproject["project"]
-    sources = pyproject.get("tool", {}).get("uv", {}).get("sources", {})
+    # Names normalized, as uv compares them
+    sources = {
+        _normalize(key): value
+        for key, value in pyproject.get("tool", {})
+        .get("uv", {})
+        .get("sources", {})
+        .items()
+    }
     problems.extend(_check_version(meta))
     extras: dict[str, list[str]] = meta.get("optional-dependencies", {})
     projects = {
@@ -240,7 +248,8 @@ def _check_meta(
             names or released_versions(plugin, root)
         ):
             continue
-        if names and sources.get(name) != {"workspace": True}:
+        source = sources.get(_normalize(name))
+        if names and not (isinstance(source, dict) and source.get("workspace") is True):
             problems.append(
                 f"{name} is pinned, but [tool.uv.sources] has no"
                 f" `{name} = {{ workspace = true }}`"
@@ -304,21 +313,31 @@ def _normalize(name: str) -> str:
 
 
 def check_dist(directory: Path, root: Path = ROOT) -> list[str]:
-    """Check the wheels of a directory.
+    """Check the distributions of a directory.
 
     Args:
-        directory: Directory with the wheels.
+        directory: Directory with the wheels and sdists.
         root: Repository root.
 
     Returns:
-        Problems found, each prefixed with the wheel's file name.
+        Problems found, each prefixed with the file name: entries that are
+        neither wheels nor sdists (the release workflow uploads everything
+        in the directory), then those of the wheels.
     """
     known = {_normalize(package.name): package for package in discover(root)}
+    entries = sorted(directory.iterdir()) if directory.is_dir() else []
     problems = [
         f"{path.name}: neither a wheel nor an sdist"
-        for path in (sorted(directory.iterdir()) if directory.is_dir() else [])
+        for path in entries
         if not (path.is_file() and path.name.endswith((".whl", ".tar.gz")))
     ]
+    # Sdists: `<normalized name>-<version>.tar.gz`
+    for sdist in sorted(directory.glob("*.tar.gz")):
+        name, _, version = sdist.name.removesuffix(".tar.gz").rpartition("-")
+        if name not in known:
+            problems.append(f"{sdist.name}: no package of this repository")
+        elif version != (current := package_version(known[name], root)):
+            problems.append(f"{sdist.name}: version is not {current!r}")
     wheels = sorted(directory.glob("*.whl"))
     if not wheels:
         return [*problems, f"{directory}: no wheels"]

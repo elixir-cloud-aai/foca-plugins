@@ -48,13 +48,10 @@ wes = []
 all = []
 experimental = []
 
-# The plugins of the workspace that the extras may pin, from the workspace
-# (not from PyPI): uv refuses workspace members as dependencies without
-# such a source (`uv lock`). Built distributions keep the exact pins of the
-# extras. Every plugin that is pinned needs its entry (`python -m
-# scripts.checks check` checks this); a plugin's entry is added with its
-# first pin, at the latest (see "Releasing" in the docs). Not the example
-# plugin, which is never published
+# The plugins that the extras may pin come from the workspace: uv refuses
+# workspace members as dependencies without these entries. Add a plugin's
+# entry with its first pin at the latest (checked by `python -m
+# scripts.checks check`; see "Releasing" in the docs)
 [tool.uv.sources]
 foca-plugin-generic-routing-random = { workspace = true }
 foca-plugin-tes-routing-distance = { workspace = true }

@@ -109,7 +109,7 @@ jobs:
       # The build backend is pinned (`build-constraint-dependencies` in the
       # root `pyproject.toml`). The commit's time as the build time makes the
       # wheels reproducible. No `.gitignore` in `dist/` (uv writes one by
-      # default), which would be uploaded and fail the checks (as in `ci.yml`)
+      # default), which would be uploaded and fail the checks
       - name: Build distributions
         env:
           NAME: ${{ steps.package.outputs.name }}

@@ -103,10 +103,9 @@ jobs:
       # manually)
       - name: Validate citation metadata
         run: pipx run --spec cffconvert==2.0.0 cffconvert --validate -i CITATION.cff
-      # As in `release.yml`: no `.gitignore` in `dist/` (uv writes one by
-      # default)
+      # No `.gitignore` in `dist/` (uv writes one by default)
       - name: Build distributions
-        run: uv build --all-packages --out-dir dist --no-create-gitignore
+        run: uv build --all-packages --no-create-gitignore
       # Each wheel has its package's version and license, and only its own
       # module (none of the shared namespace packages); `dist/` has only
       # wheels and sdists, as the release workflow requires
