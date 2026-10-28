@@ -11,7 +11,9 @@ Commands, run from the repository root as `python -m scripts.checks
   section in its changelog) and may be published is pinned to a released
   version in its group's and subgroup's extras, and in `[all]` if it is
   `stable` or `deprecated`, or in `[experimental]` if it is `experimental`
-  (the `maturity` of its class).
+  (the `maturity` of its class), and every pinned plugin has the source
+  `{ workspace = true }` in the meta distribution's `[tool.uv.sources]`
+  (without it, uv refuses the workspace).
 - `dist DIR` (`ci.yml`, job `lint`, and `release.yml`): the wheels in a
   directory (e.g., of `uv build --all-packages`): each of a package of the
   repository, of its version, with its license, its `py.typed` and only its
@@ -198,7 +200,9 @@ def _check_meta(
     problems = _check_license(directory, license_text)
     if package.name != META_NAME:
         problems.append(f"distribution is {package.name!r}, expected {META_NAME!r}")
-    meta = load_pyproject(directory / "pyproject.toml")["project"]
+    pyproject = load_pyproject(directory / "pyproject.toml")
+    meta = pyproject["project"]
+    sources = pyproject.get("tool", {}).get("uv", {}).get("sources", {})
     problems.extend(_check_version(meta))
     extras: dict[str, list[str]] = meta.get("optional-dependencies", {})
     projects = {
@@ -236,6 +240,11 @@ def _check_meta(
             names or released_versions(plugin, root)
         ):
             continue
+        if names and sources.get(name) != {"workspace": True}:
+            problems.append(
+                f"{name} is pinned, but [tool.uv.sources] has no"
+                f" `{name} = {{ workspace = true }}`"
+            )
         group, subgroup, _ = plugin.parts
         for extra in (group, f"{group}-{subgroup}"):
             if extra not in names:

@@ -150,6 +150,34 @@ def test_check_meta_requires_released(repo: Path) -> None:
     assert checks.check(repo) == [f"meta: {name} has an unknown maturity 'beta'"]
 
 
+def test_check_meta_sources(repo: Path) -> None:
+    """Pinned plugins need a workspace source in the meta distribution.
+
+    Args:
+        repo: Repository root.
+    """
+    target = new_plugin.create("tes", "routing", "distance", repo)
+    release(target)
+    name = "foca-plugin-tes-routing-distance"
+    pin = f'["{name}==0.1.0"]'
+    set_extras(repo, f"tes = {pin}\ntes-routing = {pin}\nexperimental = {pin}")
+    path = repo / "meta" / "pyproject.toml"
+    source = f"{name} = {{ workspace = true }}\n"
+    replace(path, source, "")
+    problem = (
+        f"meta: {name} is pinned, but [tool.uv.sources] has no"
+        f" `{name} = {{ workspace = true }}`"
+    )
+    assert checks.check(repo) == [problem]
+    replace(
+        path, "[tool.uv.sources]\n", f'[tool.uv.sources]\n{name} = {{ path = "x" }}\n'
+    )
+    assert checks.check(repo) == [problem]
+    # No sources at all
+    replace(path, "[tool.uv.sources]\n", "[tool.other]\n")
+    assert checks.check(repo) == [problem]
+
+
 @pytest.mark.parametrize(
     ("code", "expected"),
     [

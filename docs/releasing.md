@@ -66,7 +66,13 @@ ending with a link to its history.
    subgroup's extras, and in `[all]` if its `maturity` is `stable` or
    `deprecated`, or in `[experimental]` if it is `experimental`;
    `python -m scripts.checks check` fails otherwise, and for pins of
-   versions without a changelog section.
+   versions without a changelog section. A pinned plugin also needs the
+   entry `<distribution> = { workspace = true }` in `[tool.uv.sources]` of
+   `meta/pyproject.toml` (added with its first pin, if it isn't there yet;
+   the check fails without it), as uv refuses workspace members as
+   dependencies without one. The built distributions keep the exact pins.
+   Then re-lock (`uv lock`) and commit `uv.lock`: CI installs with
+   `uv sync --locked` and fails on an outdated lock file.
 2. Merge it, then move `main` forward to that commit (a fast-forward, as the
    rulesets allow).
 3. Push the tag `<distribution>-v<version>` on that commit, e.g.,
