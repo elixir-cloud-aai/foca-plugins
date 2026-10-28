@@ -8,7 +8,7 @@ describes the project's values and what it offers regular contributors;
 this page sums up how it applies to this repository.
 
 Please follow the [code of
-conduct](https://github.com/elixir-cloud-aai/foca-plugins/blob/dev/CODE_OF_CONDUCT.md)
+conduct](https://github.com/elixir-cloud-aai/.github/blob/main/CODE_OF_CONDUCT.md)
 in all interactions with the community. To report a violation, email
 [cloud-service@elixir-europe.org](mailto:cloud-service@elixir-europe.org).
 
