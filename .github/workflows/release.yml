@@ -1,8 +1,3 @@
-# !!! DRAFT: UNTESTED. Do not push a release tag until this workflow has been
-# !!! dry-run end to end in a fork, on a test tag, against TestPyPI (see
-# !!! `docs/releasing.md` and `MAINTAINERS.md`). Tags, published PyPI files
-# !!! and GitHub releases can't be fixed afterwards.
-#
 # Releases one package when its tag (`<distribution>-v<version>`, e.g.,
 # `foca-plugin-tes-routing-distance-v1.2.0` or `foca-plugins-v2026.11.0`)
 # is pushed. Fails safe: before anything is built, the tag is checked

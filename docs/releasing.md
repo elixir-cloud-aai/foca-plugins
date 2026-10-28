@@ -1,13 +1,10 @@
 # Releasing
 
-!!! warning "The release workflow is an untested draft"
+!!! warning "Releases can't be changed"
 
-    `.github/workflows/release.yml` has not run yet. Before the first
-    release, dry-run it end to end in a fork, on a test tag, publishing to
-    TestPyPI (see
-    [`MAINTAINERS.md`](https://github.com/elixir-cloud-aai/foca-plugins/blob/dev/MAINTAINERS.md)).
     Tags, published PyPI files and GitHub releases can't be changed
-    afterwards.
+    afterwards. Dry-run changes of the release workflow end to end in a
+    fork, on a test tag, publishing to TestPyPI, before the next release.
 
 Every package is released on its own, from `main`, by pushing its tag; the
 release workflow does the rest. There are no manual steps after the tag:
@@ -80,6 +77,14 @@ ending with a link to its history.
    Push at most 3 tags per `git push`: GitHub creates no workflow events
    for pushes of more tags at once. Each tag gets a run of its own (the
    workflow's concurrency group is per tag).
+
+The first release of a distribution needs a pending trusted publisher on
+PyPI (owner `elixir-cloud-aai`, repository `foca-plugins`, workflow
+`release.yml`, environment `pypi`). PyPI allows a pending publisher with
+these fields for only one project at a time, so first releases happen one
+after the other: add the pending publisher for one distribution, push its
+tag and let the release finish, then add it for the next one. Once a
+project exists, the same publisher can serve any number of projects.
 
 ## What the workflow does
 
