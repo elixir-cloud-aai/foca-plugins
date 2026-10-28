@@ -1,4 +1,4 @@
-"""Checks of the packages: conventions and built wheels.
+"""Checks of the packages: conventions and built distributions.
 
 Commands, run from the repository root as `python -m scripts.checks
 <command>`; problems are printed as GitHub error annotations:
