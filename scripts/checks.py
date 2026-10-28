@@ -322,7 +322,7 @@ def check_dist(directory: Path, root: Path = ROOT) -> list[str]:
     Returns:
         Problems found, each prefixed with the file name: entries that are
         neither wheels nor sdists (the release workflow uploads everything
-        in the directory), then those of the wheels.
+        in the directory), then those of the sdists and of the wheels.
     """
     known = {_normalize(package.name): package for package in discover(root)}
     entries = sorted(directory.iterdir()) if directory.is_dir() else []
@@ -386,8 +386,10 @@ def main(argv: Sequence[str] | None = None, root: Path = ROOT) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("check", help="check the conventions of the packages")
-    dist = commands.add_parser("dist", help="check built wheels")
-    dist.add_argument("directory", type=Path, help="directory with the wheels")
+    dist = commands.add_parser("dist", help="check built distributions")
+    dist.add_argument(
+        "directory", type=Path, help="directory with the wheels and sdists"
+    )
     args = parser.parse_args(argv)
     if args.command == "check":
         problems = check(root)
