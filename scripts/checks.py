@@ -1,4 +1,4 @@
-"""Checks of the packages: conventions and built wheels.
+"""Checks of the packages: conventions and built distributions.
 
 Commands, run from the repository root as `python -m scripts.checks
 <command>`; problems are printed as GitHub error annotations:
@@ -11,11 +11,15 @@ Commands, run from the repository root as `python -m scripts.checks
   section in its changelog) and may be published is pinned to a released
   version in its group's and subgroup's extras, and in `[all]` if it is
   `stable` or `deprecated`, or in `[experimental]` if it is `experimental`
-  (the `maturity` of its class).
-- `dist DIR` (`ci.yml`, job `lint`, and `release.yml`): the wheels in a
-  directory (e.g., of `uv build --all-packages`): each of a package of the
+  (the `maturity` of its class), and every pinned plugin has the source
+  `{ workspace = true }` in the meta distribution's `[tool.uv.sources]`
+  (without it, uv refuses the workspace).
+- `dist DIR` (`ci.yml`, job `lint`, and `release.yml`): the distributions
+  in a directory (e.g., of `uv build --all-packages`): each of a package of the
   repository, of its version, with its license, its `py.typed` and only its
-  own module (no files of the namespace packages).
+  own module (no files of the namespace packages); the directory holds
+  nothing but these wheels and sdists of the packages at their versions
+  (e.g., no `.gitignore` of `uv build`).
 """
 
 import argparse
@@ -197,7 +201,16 @@ def _check_meta(
     problems = _check_license(directory, license_text)
     if package.name != META_NAME:
         problems.append(f"distribution is {package.name!r}, expected {META_NAME!r}")
-    meta = load_pyproject(directory / "pyproject.toml")["project"]
+    pyproject = load_pyproject(directory / "pyproject.toml")
+    meta = pyproject["project"]
+    # Names normalized, as uv compares them
+    sources = {
+        _normalize(key): value
+        for key, value in pyproject.get("tool", {})
+        .get("uv", {})
+        .get("sources", {})
+        .items()
+    }
     problems.extend(_check_version(meta))
     extras: dict[str, list[str]] = meta.get("optional-dependencies", {})
     projects = {
@@ -235,6 +248,12 @@ def _check_meta(
             names or released_versions(plugin, root)
         ):
             continue
+        source = sources.get(_normalize(name))
+        if names and not (isinstance(source, dict) and source.get("workspace") is True):
+            problems.append(
+                f"{name} is pinned, but [tool.uv.sources] has no"
+                f" `{name} = {{ workspace = true }}`"
+            )
         group, subgroup, _ = plugin.parts
         for extra in (group, f"{group}-{subgroup}"):
             if extra not in names:
@@ -294,20 +313,34 @@ def _normalize(name: str) -> str:
 
 
 def check_dist(directory: Path, root: Path = ROOT) -> list[str]:
-    """Check the wheels of a directory.
+    """Check the distributions of a directory.
 
     Args:
-        directory: Directory with the wheels.
+        directory: Directory with the wheels and sdists.
         root: Repository root.
 
     Returns:
-        Problems found, each prefixed with the wheel's file name.
+        Problems found, each prefixed with the file name: entries that are
+        neither wheels nor sdists (the release workflow uploads everything
+        in the directory), then those of the sdists and of the wheels.
     """
     known = {_normalize(package.name): package for package in discover(root)}
+    entries = sorted(directory.iterdir()) if directory.is_dir() else []
+    problems = [
+        f"{path.name}: neither a wheel nor an sdist"
+        for path in entries
+        if not (path.is_file() and path.name.endswith((".whl", ".tar.gz")))
+    ]
+    # Sdists: `<normalized name>-<version>.tar.gz`
+    for sdist in sorted(directory.glob("*.tar.gz")):
+        name, _, version = sdist.name.removesuffix(".tar.gz").rpartition("-")
+        if name not in known:
+            problems.append(f"{sdist.name}: no package of this repository")
+        elif version != (current := package_version(known[name], root)):
+            problems.append(f"{sdist.name}: version is not {current!r}")
     wheels = sorted(directory.glob("*.whl"))
     if not wheels:
-        return [f"{directory}: no wheels"]
-    problems: list[str] = []
+        return [*problems, f"{directory}: no wheels"]
     for wheel in wheels:
         name, version = wheel.name.split("-")[:2]
         package = known.get(name)
@@ -353,8 +386,10 @@ def main(argv: Sequence[str] | None = None, root: Path = ROOT) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("check", help="check the conventions of the packages")
-    dist = commands.add_parser("dist", help="check built wheels")
-    dist.add_argument("directory", type=Path, help="directory with the wheels")
+    dist = commands.add_parser("dist", help="check built distributions")
+    dist.add_argument(
+        "directory", type=Path, help="directory with the wheels and sdists"
+    )
     args = parser.parse_args(argv)
     if args.command == "check":
         problems = check(root)
