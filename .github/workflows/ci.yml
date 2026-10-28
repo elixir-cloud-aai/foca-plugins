@@ -183,8 +183,9 @@ jobs:
           coverage xml
       # One Codecov flag per plugin (carried forward for plugins that a pull
       # request doesn't test, `codecov.yml`). Upload errors fail the workflow
-      # only on pushes, because pull requests from forks and Dependabot get no
-      # access to the Codecov token
+      # only on pushes to this repository: pull requests from forks and
+      # Dependabot get no access to the Codecov token, and forks have none
+      # (their CI passes on the tests and the coverage threshold alone)
       - name: Submit report to Codecov
         if: ${{ matrix.python-version == '3.13' && matrix.coverage }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -192,7 +193,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           flags: ${{ matrix.package.name }}
-          fail_ci_if_error: ${{ github.event_name == 'push' }}
+          fail_ci_if_error: ${{ github.event_name == 'push' && github.repository_owner == 'elixir-cloud-aai' }}
           verbose: true
       # Known vulnerabilities of the plugin's runtime dependencies, as locked
       - name: Audit dependencies
