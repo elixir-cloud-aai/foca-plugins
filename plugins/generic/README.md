@@ -10,5 +10,6 @@ Subgroups, with their plugins as `<subgroup>/<name>/`:
 
 - `example/`: [`noop`](example/noop/), the template of new plugins (never
   published).
+- `routing/`: [`random`](routing/random/), routing in random order.
 
 See [`plugins/README.md`](../README.md) for the groups and subgroups.
