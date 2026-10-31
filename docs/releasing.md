@@ -24,10 +24,22 @@ release could get different files.
   `1.2.0.dev0` (not `1.2.0-rc1` or `1.2.0RC1`), so that the version, the
   names of the built files and the tag agree; `python -m scripts.checks
   check` refuses others.
-- **Meta distribution `foca-plugins`:** calendar versions, `YYYY.MM.N` (`N`
-  counts the releases of the month, from 0). Each release is a release
-  train: its extras pin plugin versions exactly, and its `foca` requirement
-  declares the FOCA versions that the train was tested with.
+- **Meta distribution `foca-plugins`:** [Semantic
+  Versioning](https://semver.org/) as well, like the shared package version
+  of [cloud-components](https://github.com/elixir-cloud-aai/cloud-components).
+  Each release is a release train: its extras pin plugin versions exactly,
+  and its `foca` requirement declares the FOCA versions that the train was
+  tested with. Its version follows from the changes of the pins since the
+  previous train:
+    - **major:** a pinned plugin gets a major version bump, or a plugin is
+      removed from the train;
+    - **minor:** a plugin is added, or a pinned plugin gets a minor version
+      bump;
+    - **patch:** pinned plugins get only patch version bumps.
+
+    While the pinned plugins are 0.x, the meta distribution stays 0.x too:
+    what would bump its major version bumps its minor version instead. Its
+    releases before 1.0.0 are GitHub pre-releases, too.
 
 ## Changelogs and release notes
 
@@ -73,7 +85,7 @@ ending with a link to its history.
 2. Merge it, then move `main` forward to that commit (a fast-forward, as the
    rulesets allow).
 3. Push the tag `<distribution>-v<version>` on that commit, e.g.,
-   `foca-plugin-tes-routing-distance-v1.2.0` or `foca-plugins-v2026.11.0`.
+   `foca-plugin-tes-routing-distance-v1.2.0` or `foca-plugins-v0.2.0`.
    Push at most 3 tags per `git push`: GitHub creates no workflow events
    for pushes of more tags at once. Each tag gets a run of its own (the
    workflow's concurrency group is per tag).

@@ -36,10 +36,11 @@ repositories work the same way.
 <!-- --8<-- [end:synopsis] -->
 
 <!-- --8<-- [start:status] -->
-**Status:** the plugin API is new in FOCA 0.18.0; no plugins have been
-released yet. Plugins so far: `generic.routing.random` and
+**Status:** the plugin API is new in FOCA 0.18.0. Plugins so far, both
+experimental and released as 0.1.0: `generic.routing.random` and
 `tes.routing.distance`, plus the example `generic.example.noop`, the
-template of new plugins.
+template of new plugins (never published). The first release train is
+`foca-plugins` 0.1.0.
 <!-- --8<-- [end:status] -->
 
 **Read the [documentation][docs]** for installing plugins, writing them,
@@ -48,13 +49,12 @@ the plugin catalogue, contributing and releasing.
 ## Installation
 
 <!-- --8<-- [start:install] -->
-Nothing is published yet. Once plugins are released, install them into the
-environment of the gateway app, usually in an image derived from the app's
-image, then enable them in the app's configuration (FOCA's `plugins`
-section): installed is not enabled. Either a group or subgroup of a release
-train, as an extra of the meta distribution `foca-plugins` (e.g.,
-`foca-plugins[tes]`), or single plugin distributions
-(`foca-plugin-<group>-<subgroup>-<name>`).
+Install plugins into the environment of the gateway app, usually in an
+image derived from the app's image, then enable them in the app's
+configuration (FOCA's `plugins` section): installed is not enabled. Either
+a group or subgroup of a release train, as an extra of the meta
+distribution `foca-plugins` (e.g., `foca-plugins[tes]==0.1.0`), or single
+plugin distributions (`foca-plugin-<group>-<subgroup>-<name>`).
 <!-- --8<-- [end:install] -->
 
 See [Installing][docs-installing] for the extras, single distributions and

@@ -1174,7 +1174,7 @@ requires-dist = [
 
 [[package]]
 name = "foca-plugins"
-version = "2026.10.0.dev0"
+version = "0.1.0"
 source = { editable = "meta" }
 dependencies = [
     { name = "foca" },
