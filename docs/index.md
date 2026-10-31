@@ -39,6 +39,10 @@
 - [Releasing](releasing.md): versions, tags, changelogs and the release
   workflow.
 
+## Citation
+
+--8<-- "README.md:citation"
+
 ## License
 
 This project is covered by the [Apache License

@@ -87,6 +87,15 @@ are namespace packages (PEP 420, no `__init__.py`), shared by all plugin
 distributions.
 <!-- --8<-- [end:layout] -->
 
+## Citation
+
+<!-- --8<-- [start:citation] -->
+If you use FOCA plugins, please cite them with the metadata in
+[`CITATION.cff`](https://github.com/elixir-cloud-aai/foca-plugins/blob/dev/CITATION.cff):
+on GitHub, "Cite this repository" in the sidebar of the repository formats it
+as APA or BibTeX.
+<!-- --8<-- [end:citation] -->
+
 ## Contributing
 
 Contributions are welcome! See [`CONTRIBUTING.md`](CONTRIBUTING.md) and
