@@ -6,7 +6,7 @@
 # and the commit against `main`. Then it builds the distributions with
 # pinned tools, attests their build provenance (GitHub artifact
 # attestations), publishes them to PyPI with trusted publishing (no API
-# token; each PyPI project trusts this workflow file in the `pypi`
+# token; each PyPI project trusts this workflow file in the `release`
 # environment) and PEP 740 attestations, and creates the GitHub release with
 # the notes of the package's `CHANGELOG.md` and its commits since its
 # previous tag. No manual steps: "Re-run failed jobs" completes a partially
@@ -82,7 +82,7 @@ jobs:
           else
               echo "prerelease=false" >> "${GITHUB_OUTPUT}"
           fi
-      # Guards against accidental releases from unmerged commits. The `pypi`
+      # Guards against accidental releases from unmerged commits. The `release`
       # environment's protection rules are what actually control publishing
       - name: Check release commit
         env:
@@ -158,7 +158,7 @@ jobs:
           create-storage-record: false
 
   # As in FOCA. The pending trusted publisher of each PyPI project names this
-  # workflow file (`release.yml`) and the environment `pypi`; renaming
+  # workflow file (`release.yml`) and the environment `release`; renaming
   # either breaks publishing until the maintainer updates PyPI
   pypi:
     name: Publish to PyPI
@@ -166,7 +166,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
-      name: pypi
+      name: release
       url: https://pypi.org/project/${{ needs.build.outputs.name }}/${{ needs.build.outputs.version }}/
     permissions:
       id-token: write

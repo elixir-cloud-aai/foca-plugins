@@ -80,7 +80,7 @@ ending with a link to its history.
 
 The first release of a distribution needs a pending trusted publisher on
 PyPI (owner `elixir-cloud-aai`, repository `foca-plugins`, workflow
-`release.yml`, environment `pypi`). PyPI allows a pending publisher with
+`release.yml`, environment `release`). PyPI allows a pending publisher with
 these fields for only one project at a time, so first releases happen one
 after the other: add the pending publisher for one distribution, push its
 tag and let the release finish, then add it for the next one. Once a
@@ -106,7 +106,7 @@ should keep the tags from moving (see `MAINTAINERS.md`):
    provenance).
 3. **Publish to PyPI:** fails if the tag no longer points to the built
    commit; then trusted publishing (OIDC, no API token) from the
-   protected `pypi` environment, with PEP 740 attestations; already
+   protected `release` environment, with PEP 740 attestations; already
    uploaded files are skipped, so re-runs of failed jobs complete an upload.
 4. **Publish release:** checks the tag again; the GitHub release of the
    tag, with the notes above and the distributions as assets, created as a
@@ -114,5 +114,5 @@ should keep the tags from moving (see `MAINTAINERS.md`):
    the built distributions (by SHA-256), or the job fails.
 
 Each PyPI project trusts this workflow file (`release.yml`) in the
-environment `pypi`: renaming either breaks publishing until the trusted
+environment `release`: renaming either breaks publishing until the trusted
 publishers are updated on PyPI.
