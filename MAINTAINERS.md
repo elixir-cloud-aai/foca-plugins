@@ -18,8 +18,9 @@ template of all FOCA repositories, and the setup tasks that are still open.
   environment's former name `pypi`; see item 3), and a pending trusted
   publisher for the meta distribution `foca-plugins`, which its first
   release (0.1.0) turns into a regular one: workflow `release.yml`,
-  environment `release`. The GitHub environment `release` is configured
-  like FOCA's. The release workflow publishes from it.
+  environment `release` (to be checked before the tag, see item 3). The
+  GitHub environment `release` is configured like FOCA's. The release
+  workflow publishes from it.
 - **Codecov:** the repository secret `CODECOV_TOKEN`; CI uploads one report
   per plugin, flagged with the distribution name (`codecov.yml`: 100%
   targets, carried forward flags).

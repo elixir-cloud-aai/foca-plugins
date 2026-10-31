@@ -4,10 +4,9 @@ Each release of the meta distribution is a release train, tagged
 `foca-plugins-v<version>` with a semantic version, set by the changes of
 its pins. Each lists the plugin versions that its extras pin and the FOCA
 versions that it was tested with, then the changes in the sections of the
-release notes
-(Breaking changes, Features, Security, Fixes, Documentation, Maintenance;
-empty ones left out), each entry with its issue and pull request numbers
-(see "Releasing" in the docs).
+release notes (Breaking changes, Features, Security, Fixes, Documentation,
+Maintenance; empty ones left out), each entry with its issue and pull
+request numbers (see "Releasing" in the docs).
 
 ## 0.1.0
 
