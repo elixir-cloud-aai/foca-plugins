@@ -1,10 +1,10 @@
 # Changelog of `foca-plugins`
 
 Each release of the meta distribution is a release train, tagged
-`foca-plugins-v<version>` with a semantic version (see "Releasing" in the
-docs for how the pins set it). Each lists
-the plugin versions that its extras pin and the FOCA versions that it was
-tested with, then the changes in the sections of the release notes
+`foca-plugins-v<version>` with a semantic version, set by the changes of
+its pins. Each lists the plugin versions that its extras pin and the FOCA
+versions that it was tested with, then the changes in the sections of the
+release notes
 (Breaking changes, Features, Security, Fixes, Documentation, Maintenance;
 empty ones left out), each entry with its issue and pull request numbers
 (see "Releasing" in the docs).
@@ -12,8 +12,8 @@ empty ones left out), each entry with its issue and pull request numbers
 ## 0.1.0
 
 First release train: the experimental plugins `generic.routing.random` and
-`tes.routing.distance`, tested together with FOCA 0.18
-(`foca>=0.18.0,<0.19`). Pins:
+`tes.routing.distance`, resolved together and each tested against FOCA
+0.18 (`foca>=0.18.0,<0.19`). Pins:
 
 - `foca-plugin-generic-routing-random` 0.1.0
 - `foca-plugin-tes-routing-distance` 0.1.0
@@ -24,7 +24,3 @@ First release train: the experimental plugins `generic.routing.random` and
   `wes`), `all` and `experimental` (#1, #2).
 - Pin the first plugins, with the subgroup extras `generic-routing` and
   `tes-routing` (#19, #20).
-
-### Maintenance
-
-- Use semantic versions instead of calendar versions (#26, #PRNUM).

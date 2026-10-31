@@ -14,7 +14,8 @@ template of all FOCA repositories, and the setup tasks that are still open.
   vulnerability reporting); rulesets for `dev` and `main`, without required
   checks so far.
 - **PyPI:** the projects `foca-plugin-generic-routing-random` and
-  `foca-plugin-tes-routing-distance` (0.1.0 each), and a pending trusted
+  `foca-plugin-tes-routing-distance` (0.1.0 each, released from the
+  environment's former name `pypi`; see item 3), and a pending trusted
   publisher for the meta distribution `foca-plugins`, which its first
   release (0.1.0) turns into a regular one: workflow `release.yml`,
   environment `release`. The GitHub environment `release` is configured
@@ -39,8 +40,11 @@ template of all FOCA repositories, and the setup tasks that are still open.
    the docs cover the whole repository).
 3. **PyPI trusted publishers for the plugins:** each plugin distribution
    needs a pending trusted publisher of its own (workflow `release.yml`,
-   environment `release`) before its first release (the released ones have
-   theirs, see "PyPI" above); the example `foca-plugin-generic-example-noop` is never published (the
+   environment `release`) before its first release. The released ones
+   (see "PyPI" above) got theirs with the environment `pypi`: change them
+   to `release` before their next releases, and check that the pending
+   publisher of `foca-plugins` names `release` before its first tag. The
+   example `foca-plugin-generic-example-noop` is never published (the
    release workflow refuses its tags, and PyPI refuses its `Private :: Do
    Not Upload` classifier). Planned distributions (architecture plan,
    section 11.1):

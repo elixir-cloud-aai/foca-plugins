@@ -38,8 +38,11 @@ release could get different files.
     - **patch:** pinned plugins get only patch version bumps.
 
     While the pinned plugins are 0.x, the meta distribution stays 0.x too:
-    what would bump its major version bumps its minor version instead. Its
-    releases before 1.0.0 are GitHub pre-releases, too.
+    what would bump its major version (a major bump of a pin, or a removed
+    plugin) bumps its minor version instead; e.g., 0.1.0 becomes 0.2.0 when
+    a pin goes from 0.1.x to 0.2.0. The release pull request sets the
+    version by these rules; no check enforces them. Its releases before
+    1.0.0 are GitHub pre-releases, too.
 
 ## Changelogs and release notes
 
