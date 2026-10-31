@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import re
 import subprocess
 import zipfile
 
@@ -11,6 +12,9 @@ NOOP = Package(
     path="plugins/generic/example/noop", name="foca-plugin-generic-example-noop"
 )
 META = Package(path="meta", name="foca-plugins")
+# Version of the meta distribution in the copies of the repository (fixture
+# `repo`), so that the tests don't depend on the version of the next release
+META_VERSION = "0.2.0.dev0"
 DISTANCE = Package(
     path="plugins/tes/routing/distance", name="foca-plugin-tes-routing-distance"
 )
@@ -27,6 +31,21 @@ def set_extras(repo: Path, extras: str) -> None:
     head, _, tail = path.read_text().partition("[project.optional-dependencies]\n")
     _, _, rest = tail.partition("\n\n")
     path.write_text(f"{head}[project.optional-dependencies]\n{extras}\n\n{rest}")
+
+
+def set_version(repo: Path, version: str) -> None:
+    """Replace the version of the meta distribution.
+
+    Args:
+        repo: Repository root.
+        version: Version.
+    """
+    path = repo / "meta" / "pyproject.toml"
+    text, count = re.subn(
+        r'^version = "[^"]*"$', f'version = "{version}"', path.read_text(), flags=re.M
+    )
+    assert count == 1
+    path.write_text(text)
 
 
 def replace(path: Path, old: str, new: str) -> None:

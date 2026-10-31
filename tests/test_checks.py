@@ -6,7 +6,15 @@ import pytest
 
 from scripts import checks, new_plugin
 from scripts.packages import NAME_PATTERN
-from tests.helpers import DISTANCE, NOOP, make_wheel, replace, set_extras
+from tests.helpers import (
+    DISTANCE,
+    META_VERSION,
+    NOOP,
+    make_wheel,
+    replace,
+    set_extras,
+    set_version,
+)
 
 
 def test_check_passes(repo: Path) -> None:
@@ -223,7 +231,7 @@ def test_maturity(repo: Path, code: str, expected: str) -> None:
     assert checks.maturity(NOOP, repo) == expected
 
 
-@pytest.mark.parametrize("version", ["1.0", "1.0.0rc1", "2026.10.0.dev0", "1.0.post1"])
+@pytest.mark.parametrize("version", ["1.0", "1.0.0rc1", "1.2.0.dev0", "1.0.post1"])
 def test_check_versions(repo: Path, version: str) -> None:
     """Normalized PEP 440 versions pass.
 
@@ -249,8 +257,7 @@ def test_check_versions_refused(repo: Path, version: str) -> None:
         repo: Repository root.
         version: Version.
     """
-    path = repo / "meta" / "pyproject.toml"
-    replace(path, 'version = "2026.10.0.dev0"', f'version = "{version}"')
+    set_version(repo, version)
     assert checks.check(repo) == [
         f"meta: version {version!r} is no normalized PEP 440 version (e.g.,"
         " `1.2.0`, `1.2.0rc1`, `1.2.0.dev0`; no epoch, no local part)"
@@ -310,7 +317,7 @@ def test_check_dist(repo: Path) -> None:
             f"{noop}.dist-info/licenses/LICENSE",
         ],
     )
-    meta = "foca_plugins-2026.10.0.dev0"
+    meta = f"foca_plugins-{META_VERSION}"
     make_wheel(dist, f"{meta}-py3-none-any.whl", [f"{meta}.dist-info/licenses/LICENSE"])
     (dist / f"{meta}.tar.gz").write_bytes(b"")
     assert checks.check_dist(dist, repo) == []
