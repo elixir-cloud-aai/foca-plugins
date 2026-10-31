@@ -14,9 +14,9 @@ template of all FOCA repositories, and the setup tasks that are still open.
   vulnerability reporting); rulesets for `dev` and `main`, without required
   checks so far.
 - **PyPI:** a pending trusted publisher for the meta distribution
-  `foca-plugins`: workflow `release.yml`, environment `pypi`. The GitHub
-  environment `pypi` is configured like FOCA's. The release workflow
-  publishes from it (there is no separate `release` environment).
+  `foca-plugins`: workflow `release.yml`, environment `release`. The GitHub
+  environment `release` is configured like FOCA's. The release workflow
+  publishes from it.
 - **Codecov:** the repository secret `CODECOV_TOKEN`; CI uploads one report
   per plugin, flagged with the distribution name (`codecov.yml`: 100%
   targets, carried forward flags).
@@ -37,7 +37,7 @@ template of all FOCA repositories, and the setup tasks that are still open.
    the docs cover the whole repository).
 3. **PyPI trusted publishers for the plugins:** each plugin distribution
    needs a pending trusted publisher of its own (workflow `release.yml`,
-   environment `pypi`) before its first release. None exist yet; the
+   environment `release`) before its first release. None exist yet; the
    example `foca-plugin-generic-example-noop` is never published (the
    release workflow refuses its tags, and PyPI refuses its `Private :: Do
    Not Upload` classifier). Planned distributions (architecture plan,
@@ -49,7 +49,7 @@ template of all FOCA repositories, and the setup tasks that are still open.
     - `foca-plugin-tes-data-crypt4gh` (deferred)
 4. **First release:** the release workflow passed a dry run end to end in
    a fork (`uniqueg/foca-plugins`, tags `*-v0.1.0.dev1` on TestPyPI). Before
-   the first real tag, check the `pypi` environment's required reviewers
+   the first real tag, check the `release` environment's required reviewers
    and tag rule (it must allow `foca-plugin*-v*`), and the tag ruleset
    (item 7).
 5. **New FOCA minor versions:** the plugins currently declare
