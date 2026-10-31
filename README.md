@@ -1,4 +1,11 @@
-[![ELIXIR On-Cloud][logo]][org]
+<!-- markdownlint-disable MD033 MD041 -- logo first; <picture> for dark mode -->
+<a href="https://elixir-on.cloud/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo_elixir_on_cloud_night.png">
+    <img src="docs/images/logo_elixir_on_cloud.png" alt="ELIXIR On-Cloud">
+  </picture>
+</a>
+<!-- markdownlint-enable MD033 MD041 -->
 
 # FOCA plugins
 
@@ -100,5 +107,3 @@ plugin][docs-writing]).
 [docs-contributing]: <https://foca-plugins.readthedocs.io/en/latest/contributing/>
 [docs-installing]: <https://foca-plugins.readthedocs.io/en/latest/installing/>
 [docs-writing]: <https://foca-plugins.readthedocs.io/en/latest/writing-plugins/>
-[logo]: docs/images/logo_elixir_on_cloud.png
-[org]: <https://elixir-on.cloud/>
