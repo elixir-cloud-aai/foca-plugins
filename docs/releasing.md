@@ -63,16 +63,41 @@ of the version) with:
    `### Documentation`, `### Maintenance`; each entry ends with its issue and
    pull request numbers.
 
-The release workflow publishes this section as the GitHub release notes
-(`python -m scripts.release notes <tag>`), followed by `## Commits`:
-GitHub's generated notes since the package's previous tag (they credit the
-authors), ending with their `**Full Changelog**` line. The previous tag is
-the newest tag of the same distribution (`<distribution>-v<version>`, not
-those of other packages) among the ancestors of the tagged commit,
-pre-releases included (`python -m scripts.release previous`). On a package's
-first release, GitHub's notes would list the whole repository's history, so
-`## Commits` lists the commits that changed the package's directory instead,
-ending with a link to its history.
+The release workflow publishes this section as the GitHub release notes, in
+the format of all release notes of the organization:
+
+1. the intro paragraph;
+2. the grouped sections one level up, as `## Breaking changes` to
+   `## Maintenance` (the changelog nests them under `## <version>`; deeper
+   headings move up as well, code blocks stay as they are);
+3. `## Commits`: GitHub's generated notes since the package's previous tag,
+   copied verbatim without their `## What's Changed` header (they credit the
+   authors, and list new contributors under `## New Contributors`);
+4. last, GitHub's `**Full Changelog**: …` line, which ends the generated
+   notes.
+
+`python -m scripts.release notes <tag>` prints items 1 and 2, and refuses a
+section without an intro paragraph, with unknown sections or with sections
+in another order; `python -m scripts.checks check` (pre-commit and CI)
+checks the section of each package's current version the same way, so that
+the release pull request fails rather than the tag. The previous tag is the
+newest tag of the same distribution (`<distribution>-v<version>`, not those
+of other packages) among the ancestors of the tagged commit, pre-releases
+included (`python -m scripts.release previous`).
+
+GitHub's generated notes ignore paths: a plugin's `## Commits` lists every
+pull request of the repository since the plugin's previous tag, also those
+of the docs, the meta distribution and other plugins. This is accepted, as
+the format copies GitHub's notes verbatim; the changelog section above them
+says what changed in the package.
+
+On a package's first release there is no previous tag, and without one
+GitHub doesn't start at the beginning of the history, but at the newest
+release of any package of the repository (e.g., a plugin released on the
+same commit, which leaves the list empty). So `## Commits` of a first
+release lists the commits that changed the package's directory instead
+(`git log`), ending with a link to its history in place of GitHub's
+`**Full Changelog**` line.
 
 ## Steps
 
@@ -96,7 +121,15 @@ ending with a link to its history.
    `foca-plugin-tes-routing-distance-v1.2.0` or `foca-plugins-v0.2.0`.
    Push at most 3 tags per `git push`: GitHub creates no workflow events
    for pushes of more tags at once. Each tag gets a run of its own (the
-   workflow's concurrency group is per tag).
+   workflow's concurrency group is per tag), so nothing orders the runs of
+   tags pushed together.
+4. When a release train pins new plugin versions, push the plugin tags
+   first, and the meta distribution's tag only once all its pinned plugin
+   versions are on PyPI (their runs are green): a train released before its
+   pins can't be installed. The meta distribution's build job checks this
+   (`python -m scripts.release pins <tag>`) and fails before anything is
+   built if a pinned version isn't on PyPI yet; then **Re-run failed jobs**
+   once the plugins are released.
 
 The first release of a distribution needs a pending trusted publisher on
 PyPI (owner `elixir-cloud-aai`, repository `foca-plugins`, workflow
@@ -105,6 +138,17 @@ these fields for only one project at a time, so first releases happen one
 after the other: add the pending publisher for one distribution, push its
 tag and let the release finish, then add it for the next one. Once a
 project exists, the same publisher can serve any number of projects.
+
+Each PyPI project trusts this workflow file (`release.yml`) in the
+environment `release`. When the environment or the workflow file is renamed,
+update the trusted publisher of every existing project on PyPI (Manage
+project > Publishing), and the pending publisher of a distribution not
+released yet, before the next tag of each: until then, its **Publish to
+PyPI** job fails (the tag then exists already; fix the publisher and
+**Re-run failed jobs**). The rename of the environment from `pypi` to
+`release` (2026-10, #25) was done this way for
+`foca-plugin-generic-routing-random`, `foca-plugin-tes-routing-distance` and
+the pending publisher of `foca-plugins`.
 
 ## New FOCA versions
 
@@ -142,7 +186,9 @@ files):
    checks that the tag names a package and its version on that commit and
    that the package may be published (the example plugin
    `generic.example.noop` never is); then that the commit is on `main`, the
-   conventions hold and the changelog has the version's notes. It builds
+   conventions hold, the changelog has the version's notes in the format
+   above and, for the meta distribution, that its pinned plugin versions are
+   on PyPI. It builds
    the wheel and sdist with pinned tools (uv by `astral-sh/setup-uv`, pinned
    by commit, which verifies uv's checksum; the build backend pinned with
    `build-constraint-dependencies`) and checks them (only the package's own
@@ -159,6 +205,5 @@ files):
    draft and published last. A release published already must have exactly
    the built distributions (by SHA-256), or the job fails.
 
-Each PyPI project trusts this workflow file (`release.yml`) in the
-environment `release`: renaming either breaks publishing until the trusted
-publishers are updated on PyPI.
+Renaming the workflow file or the environment `release` breaks publishing
+until the trusted publishers are updated on PyPI (see [Steps](#steps)).
