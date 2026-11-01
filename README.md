@@ -13,6 +13,8 @@
 [![Build_status][badge-build-status]][badge-url-build-status]
 [![Docs][badge-docs]][badge-url-docs]
 [![Coverage][badge-coverage]][badge-url-coverage]
+[![GitHub_tag][badge-github-tag]][badge-url-github-tag]
+[![PyPI_release][badge-pypi]][badge-url-pypi]
 [![DOI][badge-doi]][badge-url-doi]
 
 <!-- --8<-- [start:synopsis] -->
@@ -113,12 +115,16 @@ plugin][docs-writing]).
 [badge-coverage]: <https://codecov.io/gh/elixir-cloud-aai/foca-plugins/branch/dev/graph/badge.svg?branch=dev>
 [badge-doi]: <https://zenodo.org/badge/DOI/10.5281/zenodo.23858996.svg>
 [badge-docs]: <https://img.shields.io/readthedocs/foca-plugins>
+[badge-github-tag]: <https://img.shields.io/github/v/tag/elixir-cloud-aai/foca-plugins?filter=foca-plugins-v*&label=tag&color=C39BD3>
 [badge-license]: <https://img.shields.io/badge/license-Apache%202.0-blue.svg>
+[badge-pypi]: <https://img.shields.io/pypi/v/foca-plugins?color=C39BD3>
 [badge-url-build-status]: <https://github.com/elixir-cloud-aai/foca-plugins/actions/workflows/ci.yml?query=branch%3Adev>
 [badge-url-coverage]: <https://codecov.io/gh/elixir-cloud-aai/foca-plugins?branch=dev>
 [badge-url-doi]: <https://doi.org/10.5281/zenodo.23858996>
 [badge-url-docs]: <https://foca-plugins.readthedocs.io/en/latest/>
+[badge-url-github-tag]: <https://github.com/elixir-cloud-aai/foca-plugins/releases>
 [badge-url-license]: <https://www.apache.org/licenses/LICENSE-2.0>
+[badge-url-pypi]: <https://pypi.org/project/foca-plugins/>
 [docs]: <https://foca-plugins.readthedocs.io/en/latest/>
 [docs-contributing]: <https://foca-plugins.readthedocs.io/en/latest/contributing/>
 [docs-installing]: <https://foca-plugins.readthedocs.io/en/latest/installing/>
