@@ -46,7 +46,7 @@ def test_release_refused(repo: Path, tag: str, message: str) -> None:
         tag: Tag.
         message: Expected error message.
     """
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match=re.escape(message)):
         release.release(tag, repo)
 
 

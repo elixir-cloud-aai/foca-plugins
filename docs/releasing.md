@@ -37,6 +37,11 @@ release could get different files.
       bump;
     - **patch:** pinned plugins get only patch version bumps.
 
+    Changes of the metadata count the same way: dropping FOCA versions from
+    the `foca` requirement counts as major, adding FOCA versions as minor,
+    and moving a plugin between `[experimental]` and `[all]` (a change of
+    its maturity) as minor. The highest of these bumps sets the version.
+
     While the pinned plugins are 0.x, the meta distribution stays 0.x too:
     what would bump its major version (a major bump of a pin, or a removed
     plugin) bumps its minor version instead; e.g., 0.1.0 becomes 0.2.0 when
