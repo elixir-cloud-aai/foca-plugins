@@ -177,7 +177,7 @@ jobs:
           name: dist
           path: dist/
       # The tag must still name the commit that was built (a tag ruleset
-      # should forbid moving it; see `MAINTAINERS.md`)
+      # should forbid moving it; see "Releasing" in the docs)
       - name: Check tag
         env:
           TAG: ${{ github.ref_name }}

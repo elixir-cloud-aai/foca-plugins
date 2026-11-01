@@ -106,11 +106,32 @@ after the other: add the pending publisher for one distribution, push its
 tag and let the release finish, then add it for the next one. Once a
 project exists, the same publisher can serve any number of projects.
 
+## New FOCA versions
+
+Each plugin declares the FOCA versions that it supports (`foca>=X,<Y` in
+its `pyproject.toml`), and so does the meta distribution. When FOCA
+releases a new minor version (Dependabot proposes it for `uv.lock`):
+
+1. Add it to the FOCA versions of the test matrix (`ci.yml`, job `test`)
+   as the newest release, and fix what fails.
+2. Raise the upper bounds of the plugins that pass, of the template
+   `generic.example.noop` (new plugins start from it) and of the meta
+   distribution.
+3. If plugins drop old FOCA versions, raise their lower bounds, and the
+   lowest FOCA version of the matrix with them; move `coverage: true` to
+   the new lowest entry.
+4. Release the plugins whose range changed (a patch release if the range
+   only widened), then a release train that pins them.
+
 ## What the workflow does
 
 `release.yml` runs for tags `foca-plugin*-v*`, on the pushed commit
 (`github.sha`), not on whatever the tag points to later; a tag ruleset
-should keep the tags from moving (see `MAINTAINERS.md`):
+should keep the tags from moving (one that protects `foca-plugin*-v*`, which
+covers the meta distribution's `foca-plugins-v*`, from updates and
+deletion; the workflow fails if a tag moves during the run, but only the
+ruleset stops a tag from pointing at other code than its published
+files):
 
 1. **Build distributions:** first, before anything is installed or built,
    checks that the tag names a package and its version on that commit and
