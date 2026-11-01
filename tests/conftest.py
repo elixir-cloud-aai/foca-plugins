@@ -5,7 +5,7 @@ import shutil
 
 import pytest
 
-from tests.helpers import set_extras
+from tests.helpers import META_VERSION, set_extras, set_version
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = "plugins/generic/example/noop"
@@ -21,7 +21,8 @@ def repo(tmp_path: Path) -> Path:
     Returns:
         Root of the copy: the `LICENSE`, the meta distribution and the
         example plugin. The meta distribution's extras are empty, as the
-        copy has no released plugins to pin.
+        copy has no released plugins to pin, and its version is
+        `META_VERSION`.
     """
     ignore = shutil.ignore_patterns("__pycache__", "*.egg-info", "build")
     shutil.copy(ROOT / "LICENSE", tmp_path / "LICENSE")
@@ -30,4 +31,5 @@ def repo(tmp_path: Path) -> Path:
     set_extras(
         tmp_path, "generic = []\ntes = []\nwes = []\nall = []\nexperimental = []"
     )
+    set_version(tmp_path, META_VERSION)
     return tmp_path

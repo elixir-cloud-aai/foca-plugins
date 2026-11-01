@@ -13,10 +13,14 @@ template of all FOCA repositories, and the setup tasks that are still open.
   merge, no wiki or discussions, topics; security policies (private
   vulnerability reporting); rulesets for `dev` and `main`, without required
   checks so far.
-- **PyPI:** a pending trusted publisher for the meta distribution
-  `foca-plugins`: workflow `release.yml`, environment `release`. The GitHub
-  environment `release` is configured like FOCA's. The release workflow
-  publishes from it.
+- **PyPI:** the projects `foca-plugin-generic-routing-random` and
+  `foca-plugin-tes-routing-distance` (0.1.0 each, released from the
+  environment's former name `pypi`; see item 3), and a pending trusted
+  publisher for the meta distribution `foca-plugins`, which its first
+  release (0.1.0) turns into a regular one: workflow `release.yml`,
+  environment `release` (to be checked before the tag, see item 3). The
+  GitHub environment `release` is configured like FOCA's. The release
+  workflow publishes from it.
 - **Codecov:** the repository secret `CODECOV_TOKEN`; CI uploads one report
   per plugin, flagged with the distribution name (`codecov.yml`: 100%
   targets, carried forward flags).
@@ -37,7 +41,10 @@ template of all FOCA repositories, and the setup tasks that are still open.
    the docs cover the whole repository).
 3. **PyPI trusted publishers for the plugins:** each plugin distribution
    needs a pending trusted publisher of its own (workflow `release.yml`,
-   environment `release`) before its first release. None exist yet; the
+   environment `release`) before its first release. The released ones
+   (see "PyPI" above) got theirs with the environment `pypi`: change them
+   to `release` before their next releases, and check that the pending
+   publisher of `foca-plugins` names `release` before its first tag. The
    example `foca-plugin-generic-example-noop` is never published (the
    release workflow refuses its tags, and PyPI refuses its `Private :: Do
    Not Upload` classifier). Planned distributions (architecture plan,

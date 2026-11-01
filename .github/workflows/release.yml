@@ -1,5 +1,5 @@
 # Releases one package when its tag (`<distribution>-v<version>`, e.g.,
-# `foca-plugin-tes-routing-distance-v1.2.0` or `foca-plugins-v2026.11.0`)
+# `foca-plugin-tes-routing-distance-v1.2.0` or `foca-plugins-v0.2.0`)
 # is pushed. Fails safe: before anything is built, the tag is checked
 # against the package (`python -m scripts.release release`: a package of
 # this repository, its version on the tagged commit, not the example plugin)
@@ -75,8 +75,8 @@ jobs:
           version="$(jq -r .version <<< "${package}")"
           # GitHub pre-releases: alphas, betas, release candidates and dev
           # releases (also with a post release, e.g., `1.0rc1.post1`; in
-          # normalized versions, these letters mark nothing else), and plugins
-          # before 1.0.0 (not the calendar-versioned meta distribution)
+          # normalized versions, these letters mark nothing else), and all
+          # packages before 1.0.0 (plugins and the meta distribution)
           if [[ "${version}" =~ (a|b|rc|\.dev)[0-9] || "${version}" == 0.* ]]; then
               echo "prerelease=true" >> "${GITHUB_OUTPUT}"
           else

@@ -10,9 +10,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "foca-plugins"
-# Calendar version of the release train, `YYYY.MM.N` (N counts the releases
-# of the month, from 0); set in the release pull request
-version = "2026.10.0.dev0"
+# Semantic version of the release train, derived from the changes of its
+# pins (see "Releasing" in the docs); set in the release pull request
+version = "0.1.0"
 description = "Selections of the FOCA gateway plugins of ELIXIR On-Cloud"
 readme = "README.md"
 # FOCA's `requires-python`, as in the plugins

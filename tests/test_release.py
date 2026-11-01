@@ -2,11 +2,14 @@
 
 import json
 from pathlib import Path
+import re
 
 import pytest
 
 from scripts import new_plugin, release
-from tests.helpers import DISTANCE, git
+from tests.helpers import DISTANCE, META_VERSION, git
+
+META_TAG = f"foca-plugins-v{META_VERSION}"
 
 
 def test_release(repo: Path) -> None:
@@ -21,7 +24,7 @@ def test_release(repo: Path) -> None:
         "name": DISTANCE.name,
         "version": "0.1.0",
     }
-    assert release.release("foca-plugins-v2026.10.0.dev0", repo)["path"] == "meta"
+    assert release.release(META_TAG, repo)["path"] == "meta"
 
 
 @pytest.mark.parametrize(
@@ -29,9 +32,9 @@ def test_release(repo: Path) -> None:
     [
         ("v0.1.0", "is no tag"),
         ("foca-plugin-other-v0.1.0", "is no tag"),
-        ("foca-plugins-2026.10.0", "is no tag"),
-        ("foca-plugins-v2026.10.0-dev0", "is no tag"),
-        ("foca-plugins-v2026.11.0", "has version '2026.10.0.dev0' on this commit"),
+        ("foca-plugins-0.2.0", "is no tag"),
+        ("foca-plugins-v0.2.0-dev0", "is no tag"),
+        ("foca-plugins-v0.3.0", f"has version '{META_VERSION}' on this commit"),
         ("foca-plugin-generic-example-noop-v0.1.0", "is never published"),
     ],
 )
@@ -43,7 +46,7 @@ def test_release_refused(repo: Path, tag: str, message: str) -> None:
         tag: Tag.
         message: Expected error message.
     """
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match=re.escape(message)):
         release.release(tag, repo)
 
 
@@ -55,21 +58,22 @@ def test_notes(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
         capsys: Captured output.
     """
     changelog = repo / "meta" / "CHANGELOG.md"
-    tag = "foca-plugins-v2026.10.0.dev0"
-    with pytest.raises(ValueError, match=r"no sections '## 2026\.10\.0\.dev0'"):
+    tag = META_TAG
+    section = re.escape(f"## {META_VERSION}")
+    with pytest.raises(ValueError, match=f"no sections '{section}'"):
         release.notes(tag, repo)
-    changelog.write_text("## 2026.10.0.dev0\n\nA.\n\n## 2026.10.0.dev0 (2)\n\nB.\n")
-    with pytest.raises(ValueError, match=r"has 2 sections '## 2026\.10\.0\.dev0'"):
+    changelog.write_text(f"## {META_VERSION}\n\nA.\n\n## {META_VERSION} (2)\n\nB.\n")
+    with pytest.raises(ValueError, match=f"has 2 sections '{section}'"):
         release.notes(tag, repo)
-    changelog.write_text("# Changelog\n\n## 2026.10.0.dev0\n\n## 2026.9.0\n\nOld\n")
+    changelog.write_text(f"# Changelog\n\n## {META_VERSION}\n\n## 0.1.0\n\nOld\n")
     with pytest.raises(ValueError, match="is empty"):
         release.notes(tag, repo)
     changelog.write_text(
-        "# Changelog\n\n## 2026.10.0.dev0 (2026-10-25)\n\nIntro.\n\n"
-        "### Features\n\n- New (#1, #2)\n\n## 2026.9.0\n\nOld\n"
+        f"# Changelog\n\n## {META_VERSION} (2026-10-25)\n\nIntro.\n\n"
+        "### Features\n\n- New (#1, #2)\n\n## 0.1.0\n\nOld\n"
     )
     assert release.notes(tag, repo) == "Intro.\n\n### Features\n\n- New (#1, #2)\n"
-    changelog.write_text("## 2026.10.0.dev0\n\nLast.\n")
+    changelog.write_text(f"## {META_VERSION}\n\nLast.\n")
     assert release.main(["notes", tag], repo) == 0
     assert capsys.readouterr().out == "Last.\n"
 
@@ -81,11 +85,11 @@ def test_main(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
         repo: Repository root.
         capsys: Captured output.
     """
-    assert release.main(["release", "foca-plugins-v2026.10.0.dev0"], repo) == 0
+    assert release.main(["release", META_TAG], repo) == 0
     assert json.loads(capsys.readouterr().out)["name"] == "foca-plugins"
     assert release.main(["release", "x"], repo) == 1
     assert "::error::'x' is no tag" in capsys.readouterr().err
-    assert release.main(["previous", "foca-plugins-v2026.10.0.dev0", "x"], repo) == 0
+    assert release.main(["previous", META_TAG, "x"], repo) == 0
     assert capsys.readouterr().out == "\n"
 
 

@@ -8,31 +8,32 @@ enabled. Installing a whole group and enabling two plugins is valid;
 security-conscious operators install only what they enable, to keep
 dependencies (and scanner findings) out of their images.
 
-!!! warning "Nothing to install yet"
+!!! note "Experimental plugins only"
 
-    No plugin and no release train has been published yet: the meta
-    distribution's extras are empty, and the distributions named below are
-    examples of the naming scheme. This page describes how installing will
-    work once they are released.
+    The plugins released so far, `generic.routing.random` and
+    `tes.routing.distance` (0.1.0 each), are experimental; the first release
+    train is `foca-plugins` 0.1.0. Distributions named below that don't
+    exist yet are examples of the naming scheme.
 
 ## Release trains: the meta distribution
 
 The meta distribution `foca-plugins` has no code, only extras that pin
 plugins of this repository to exact versions. Each release of it is a
-**release train** (a calendar version, `YYYY.MM.N`): plugins tested
-together against the FOCA versions that it declares.
+**release train** (a semantic version, set by the changes of its pins; see
+[Releasing](releasing.md#versions)): plugins tested together against the
+FOCA versions that it declares.
 
-| Extra | Will install | Now |
+| Extra | Installs | Now |
 | --- | --- | --- |
-| `foca-plugins[<group>]` (`generic`, `tes`, `wes`) | the stable and experimental plugins of a group | empty |
-| `foca-plugins[<group>-<subgroup>]`, e.g., `[tes-routing]` | those of a subgroup | not defined yet (added with the subgroup's first plugin) |
+| `foca-plugins[<group>]` (`generic`, `tes`, `wes`) | the stable and experimental plugins of a group | `[generic]`: `generic.routing.random`; `[tes]`: `tes.routing.distance`; `[wes]`: empty |
+| `foca-plugins[<group>-<subgroup>]`, e.g., `[tes-routing]` | those of a subgroup | `[generic-routing]`, `[tes-routing]` (a subgroup's extra is added with its first plugin) |
 | `foca-plugins[all]` | all stable plugins | empty |
-| `foca-plugins[experimental]` | all experimental plugins | empty |
+| `foca-plugins[experimental]` | all experimental plugins | both plugins |
 
-Once a release train exists, e.g.:
+For example:
 
 ```bash
-pip install "foca-plugins[tes-routing]==<release train>"
+pip install "foca-plugins[tes-routing]==0.1.0"
 ```
 
 The example plugin `generic.example.noop` is never published, so it is in
@@ -41,11 +42,11 @@ no extra.
 ## Single distributions
 
 Install plugins directly to choose versions yourself, or to combine plugins
-of this repository with those of others, e.g., once released (both names are
-examples):
+of this repository with those of others, e.g. (the second name is an
+example):
 
 ```bash
-pip install "foca-plugin-tes-routing-distance==<version>" "org-example-cost-routing==<version>"
+pip install "foca-plugin-tes-routing-distance==0.1.0" "org-example-cost-routing==<version>"
 ```
 
 Each plugin declares the FOCA versions that it supports (`foca>=X,<Y`) and
