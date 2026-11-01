@@ -4,7 +4,6 @@ from email.message import Message
 import json
 from pathlib import Path
 import re
-from typing import Any
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -107,6 +106,17 @@ def test_notes_format(repo: Path) -> None:
         "Intro, see\n#12.\n\n## Fixes\n\n### Plugin\n\n```toml\n### x\n```\n\n"
         "~~~\n# y\n~~~\n"
     )
+    # Indented headings and fences (up to 3 spaces), closing sequences of
+    # headings, inline code that looks like a fence, and fences that only
+    # close with a line of at least as many of their characters
+    text = (
+        "Intro, `x`\n```a```.\n\n  ### Fixes ##\n\n````\n```\n    ````\n````\n\n"
+        " ~~~\n### x\n   ~~~  \n\n- B (#2)\n"
+    )
+    assert notes(text) == (
+        "Intro, `x`\n```a```.\n\n  ## Fixes ##\n\n````\n```\n    ````\n````\n\n"
+        " ~~~\n### x\n   ~~~  \n\n- B (#2)\n"
+    )
 
 
 @pytest.mark.parametrize(
@@ -123,6 +133,10 @@ def test_notes_format(repo: Path) -> None:
             "'Fixes' after 'Fixes'",
         ),
         ("Intro.\n\n# Title\n", "heading '# Title'"),
+        ("Intro.\n\n### C#\n", "unknown section 'C#'"),
+        ("Intro.\n\n#### Fixes\n\n- A (#1)\n", "outside a grouped section"),
+        ("Intro.\nTitle\n---\n", "heading 'Title'"),
+        ("Intro.\n\n### Fixes\n\nTitle\n=\n", "heading 'Title'"),
         ("Intro.\n\n```\n### Fixes\n", "unclosed code block"),
     ],
 )
@@ -159,39 +173,48 @@ class Response:
         """
 
 
-def fake_pypi(published: set[str], error: Exception | None = None) -> Any:
-    """Make a fake `urlopen()` of PyPI's JSON API.
+class FakePyPI:
+    """A fake `urlopen()` of PyPI's JSON API, which records its calls.
 
-    Args:
+    Attributes:
         published: URLs of the published releases.
         error: Error raised for any other URL; HTTP 404 by default.
-
-    Returns:
-        A function like `urlopen()`, which records the URLs and timeouts.
+        calls: URLs and timeouts of the calls.
     """
-    calls: list[tuple[str, float]] = []
 
-    def urlopen(url: str, timeout: float) -> Response:
-        calls.append((url, timeout))
-        if url in published:
+    def __init__(self, published: set[str], error: Exception | None = None) -> None:
+        """Set up the fake.
+
+        Args:
+            published: URLs of the published releases.
+            error: Error raised for any other URL; HTTP 404 by default.
+        """
+        self.published = published
+        self.error = error
+        self.calls: list[tuple[str, float]] = []
+
+    def __call__(self, url: str, timeout: float) -> Response:
+        """Open a URL.
+
+        Args:
+            url: URL.
+            timeout: Timeout in seconds.
+
+        Returns:
+            A response, if the URL is of a published release.
+
+        Raises:
+            HTTPError: HTTP 404, unless another error is set.
+            Exception: The error that is set.
+        """
+        self.calls.append((url, timeout))
+        if url in self.published:
             return Response()
-        raise error or HTTPError(url, 404, "Not Found", Message(), None)
-
-    urlopen.calls = calls  # type: ignore[attr-defined]
-    return urlopen
+        raise self.error or HTTPError(url, 404, "Not Found", Message(), None)
 
 
-def pypi_url(name: str, version: str) -> str:
-    """Get the URL of a release in PyPI's JSON API.
-
-    Args:
-        name: Distribution.
-        version: Version.
-
-    Returns:
-        URL.
-    """
-    return f"https://pypi.org/pypi/{name}/{version}/json"
+A_URL = "https://pypi.org/pypi/foca-plugin-tes-routing-a/1.0.0/json"
+B_URL = "https://pypi.org/pypi/foca-plugin-tes-routing-b/0.2.0rc1/json"
 
 
 def test_unpublished(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -204,15 +227,20 @@ def test_unpublished(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     a = "foca-plugin-tes-routing-a==1.0.0"
     b = "foca-plugin-tes-routing-b==0.2.0rc1"
     set_extras(repo, f'tes = ["{a}", "{b}"]\nall = ["{a}"]\nexperimental = ["{b}"]')
-    urlopen = fake_pypi({pypi_url("foca-plugin-tes-routing-a", "1.0.0")})
+    urlopen = FakePyPI({A_URL})
     monkeypatch.setattr(release, "urlopen", urlopen)
     assert release.unpublished(META_TAG, repo) == [b]
     # Each pin once, with a timeout
-    assert [url for url, _ in urlopen.calls] == [
-        pypi_url("foca-plugin-tes-routing-a", "1.0.0"),
-        pypi_url("foca-plugin-tes-routing-b", "0.2.0rc1"),
-    ]
+    assert [url for url, _ in urlopen.calls] == [A_URL, B_URL]
     assert all(timeout > 0 for _, timeout in urlopen.calls)
+    # Names and versions can't change the path or add a query
+    set_extras(repo, 'tes = ["foca-plugin-tes-routing-a==1/../2?x"]')
+    assert release.unpublished(META_TAG, repo) == [
+        "foca-plugin-tes-routing-a==1/../2?x"
+    ]
+    assert urlopen.calls[-1][0] == (
+        "https://pypi.org/pypi/foca-plugin-tes-routing-a/1%2F..%2F2%3Fx/json"
+    )
     # Plugins pin nothing
     new_plugin.create("tes", "routing", "distance", repo)
     assert release.unpublished("foca-plugin-tes-routing-distance-v0.1.0", repo) == []
@@ -236,7 +264,7 @@ def test_unpublished_errors(
         error: Error of PyPI.
     """
     set_extras(repo, 'tes = ["foca-plugin-tes-routing-a==1.0.0"]')
-    monkeypatch.setattr(release, "urlopen", fake_pypi(set(), error))
+    monkeypatch.setattr(release, "urlopen", FakePyPI(set(), error))
     with pytest.raises(ValueError, match="Can't check foca-plugin-tes-routing-a"):
         release.unpublished(META_TAG, repo)
 
@@ -251,13 +279,18 @@ def test_main_pins(
         monkeypatch: Patches.
         capsys: Captured output.
     """
-    monkeypatch.setattr(release, "urlopen", fake_pypi(set()))
+    monkeypatch.setattr(release, "urlopen", FakePyPI(set()))
     assert release.main(["pins", META_TAG], repo) == 0
     set_extras(repo, 'tes = ["foca-plugin-tes-routing-a==1.0.0"]')
     assert release.main(["pins", META_TAG], repo) == 1
-    error = capsys.readouterr().err
-    assert "::error::" in error
-    assert "foca-plugin-tes-routing-a==1.0.0" in error
+    assert capsys.readouterr().err == (
+        "::error::Not on PyPI yet: foca-plugin-tes-routing-a==1.0.0. Release"
+        " these plugins first, then re-run the failed jobs\n"
+    )
+    outage = HTTPError(A_URL, 503, "Service Unavailable", Message(), None)
+    monkeypatch.setattr(release, "urlopen", FakePyPI(set(), outage))
+    assert release.main(["pins", META_TAG], repo) == 1
+    assert "::error::Can't check foca-plugin-tes-routing-a" in capsys.readouterr().err
 
 
 def test_main(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:

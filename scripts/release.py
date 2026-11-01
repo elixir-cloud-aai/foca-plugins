@@ -54,10 +54,17 @@ SECTIONS = (
     "Documentation",
     "Maintenance",
 )
-# Markdown headings (ATX: up to six `#`, then a space or the end of the line)
-HEADING = re.compile(r"(?P<level>#{1,6})(?:[ \t]+(?P<title>.*?))?[ \t#]*")
-# Fences of code blocks, whose lines are no headings
-FENCE = re.compile(r"(?P<fence>`{3,}|~{3,})")
+# Markdown (CommonMark) headings: ATX headings (up to six `#`, then a space
+# or the end of the line; an optional closing sequence of `#` after a space)
+# and the underlines of setext headings (`=` or `-` below a paragraph line),
+# indented by up to three spaces
+HEADING = re.compile(
+    r" {0,3}(?P<level>#{1,6})(?:[ \t]+(?P<title>.*?)(?:[ \t]+#+)?)?[ \t]*"
+)
+UNDERLINE = re.compile(r" {0,3}(=+|-+)[ \t]*")
+# Opening fences of code blocks, whose lines are no headings (no backticks
+# in the info string of a backtick fence, or it is inline code)
+FENCE = re.compile(r" {0,3}(?P<fence>`{3,}(?!.*`)|~{3,})")
 # A release's page in PyPI's JSON API (HTTP 404 if there is none)
 PYPI_RELEASE = "https://pypi.org/pypi/{name}/{version}/json"
 PYPI_TIMEOUT = 30.0
@@ -136,30 +143,39 @@ def _format(body: str, version: str) -> str:
         `## Features`); lines in code blocks are left as they are.
 
     Raises:
-        ValueError: The section has no intro paragraph, a heading above level 3,
-            or grouped sections with other names or in another order than
-            `SECTIONS`.
+        ValueError: The section has no intro paragraph, a heading above level 3
+            (also a setext heading), a deeper heading before the first grouped
+            section, grouped sections with other names or in another order
+            than `SECTIONS`, or an unclosed code block.
     """
     prefix = f"The section of {version}"
     lines: list[str] = []
-    fence = ""
+    closing: re.Pattern[str] | None = None
     found: list[str] = []
     for line in body.splitlines():
-        opening = FENCE.match(line)
         heading = HEADING.fullmatch(line)
-        if fence:
-            # Closed by a line of at least as many of its characters
-            closing = line.strip()
-            if len(closing) >= len(fence) and set(closing) == {fence[0]}:
-                fence = ""
+        opening = FENCE.match(line)
+        if closing is not None:
+            if closing.fullmatch(line):
+                closing = None
         elif opening is not None:
+            # Closed by a line of at least as many of its characters
             fence = opening["fence"]
+            closing = re.compile(
+                rf" {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*"
+            )
+        elif lines and lines[-1].strip() and UNDERLINE.fullmatch(line):
+            raise ValueError(f"{prefix} has a heading {lines[-1].strip()!r}")
         elif heading is not None:
             level, title = heading["level"], heading["title"] or ""
             if not lines:
                 raise ValueError(f"{prefix} has no intro paragraph")
             if len(level) < len("###"):
                 raise ValueError(f"{prefix} has a heading {line.strip()!r}")
+            if len(level) > len("###") and not found:
+                raise ValueError(
+                    f"{prefix} has a heading {line.strip()!r} outside a grouped section"
+                )
             if level == "###":
                 if title not in SECTIONS:
                     raise ValueError(
@@ -172,10 +188,10 @@ def _format(body: str, version: str) -> str:
                         f" expected the order {', '.join(SECTIONS)}"
                     )
                 found.append(title)
-            lines.append(line[1:])
+            lines.append(line.replace("#", "", 1))
             continue
         lines.append(line)
-    if fence:
+    if closing is not None:
         raise ValueError(f"{prefix} has an unclosed code block")
     return "\n".join(lines)
 
@@ -211,7 +227,9 @@ def unpublished(tag: str, root: Path = ROOT) -> list[str]:
     missing = []
     for pin in pins:
         name, _, version = pin.partition("==")
-        url = PYPI_RELEASE.format(name=quote(name), version=quote(version))
+        url = PYPI_RELEASE.format(
+            name=quote(name, safe=""), version=quote(version, safe="")
+        )
         try:
             # A fixed HTTPS URL of PyPI, with a quoted name and version
             with urlopen(url, timeout=PYPI_TIMEOUT):  # noqa: S310
