@@ -6,11 +6,10 @@
 # and the commit against `main` (job `prepare`). Then it builds the
 # distributions with pinned tools (`prepare`), attests their build provenance
 # (`attest`; GitHub artifact attestations), releases them to PyPI (`pypi`)
-# with trusted publishing (no API
-# token; each PyPI project trusts this workflow file in the `release`
-# environment) and PEP 740 attestations, and creates the GitHub release
-# (`publish`) with the notes of the package's `CHANGELOG.md` and its commits since its
-# previous tag. No manual steps: "Re-run failed jobs" completes a partially
+# with trusted publishing (no API token; each PyPI project trusts this
+# workflow file in the `release` environment) and PEP 740 attestations, and
+# creates the GitHub release (`publish`) with the notes of the package's
+# `CHANGELOG.md` and its commits since its previous tag. No manual steps: "Re-run failed jobs" completes a partially
 # failed release with the distributions of the first attempt. Never use
 # "Re-run all jobs": it builds again, and sdists aren't reproducible (the
 # build backend stores file times), so PyPI and the GitHub release would get
@@ -111,10 +110,6 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
-      # The build backend is pinned (`build-constraint-dependencies` in the
-      # root `pyproject.toml`). The commit's time as the build time makes the
-      # wheels reproducible. No `.gitignore` in `dist/` (uv writes one by
-      # default), which would be uploaded and fail the checks
       # PyPI can't resolve the relative image paths of the package's README:
       # they become absolute URLs pinned to the release tag, so the long
       # description of the package shows the images (the paths are relative
@@ -129,6 +124,10 @@ jobs:
               "https://raw.githubusercontent.com/${REPOSITORY}/${TAG}/${PACKAGE}" \
               "${PACKAGE}/README.md"
           python -m scripts.readme_images check "${PACKAGE}/README.md"
+      # The build backend is pinned (`build-constraint-dependencies` in the
+      # root `pyproject.toml`). The commit's time as the build time makes the
+      # wheels reproducible. No `.gitignore` in `dist/` (uv writes one by
+      # default), which would be uploaded and fail the checks
       - name: Build distributions
         env:
           NAME: ${{ steps.package.outputs.name }}
@@ -219,7 +218,7 @@ jobs:
           fi
       # PEP 740 attestations (Sigstore) for every file, made by the action
       # with the workflow's OIDC identity
-      - name: Publish to PyPI
+      - name: Upload to PyPI
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           attestations: true
