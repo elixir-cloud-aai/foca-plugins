@@ -93,8 +93,17 @@ jobs:
               exit 1
           fi
           python -m scripts.checks check
-          # The notes must exist before anything is published
+          # The notes must exist, in the organization's format, before
+          # anything is published
           python -m scripts.release notes "${TAG}" > /dev/null
+      # The meta distribution only after its pins: every plugin version that
+      # its extras pin must be on PyPI, or its release couldn't be installed.
+      # Push the plugin tags first; if this fails, re-run the failed jobs
+      # once those releases are on PyPI. Plugins pin nothing
+      - name: Check pinned plugins
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python -m scripts.release pins "${TAG}"
       # The uv version's checksum is verified by the action
       - name: Set up uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -227,15 +236,18 @@ jobs:
         with:
           name: dist
           path: dist/
-      # The notes: the version's section of the package's changelog (intro
-      # and grouped sections), then `## Commits`. After an earlier tag of
-      # the package (tags that match `^<distribution>-v[0-9]`, so not those
-      # of other packages), these are GitHub's generated notes since that
-      # tag, without their `## What's Changed` header and ending with their
-      # `**Full Changelog**` line (the format of all release notes of the
-      # organization). On the package's first release, GitHub's notes would
-      # list the whole repository, so they are the commits that changed the
-      # package's directory, with a link to its history. Assets of a
+      # The notes, in the format of all release notes of the organization:
+      # the version's section of the package's changelog (intro and grouped
+      # sections, raised from `###` to `##`), then `## Commits`. After an
+      # earlier tag of the package (tags that match `^<distribution>-v[0-9]`,
+      # so not those of other packages), these are GitHub's generated notes
+      # since that tag, verbatim without their `## What's Changed` header and
+      # ending with their `**Full Changelog**` line; they ignore paths, so
+      # they list all pull requests of the repository since that tag. On the
+      # package's first release there is no such tag, and without one GitHub
+      # starts at the newest release of any package (not at the start of the
+      # history), so they are the commits that changed the package's
+      # directory, with a link to its history. Assets of a
       # published immutable release can't be changed, so the release is
       # created as a draft, gets the distributions, and is published last.
       # Re-runs finish a draft of an earlier attempt and leave a published

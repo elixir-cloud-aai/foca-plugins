@@ -1,13 +1,16 @@
 """Tests of `scripts/release.py`."""
 
+from email.message import Message
 import json
 from pathlib import Path
 import re
+from typing import Any
+from urllib.error import HTTPError, URLError
 
 import pytest
 
 from scripts import new_plugin, release
-from tests.helpers import DISTANCE, META_VERSION, git
+from tests.helpers import DISTANCE, META_VERSION, git, set_extras
 
 META_TAG = f"foca-plugins-v{META_VERSION}"
 
@@ -72,10 +75,189 @@ def test_notes(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
         f"# Changelog\n\n## {META_VERSION} (2026-10-25)\n\nIntro.\n\n"
         "### Features\n\n- New (#1, #2)\n\n## 0.1.0\n\nOld\n"
     )
-    assert release.notes(tag, repo) == "Intro.\n\n### Features\n\n- New (#1, #2)\n"
+    assert release.notes(tag, repo) == "Intro.\n\n## Features\n\n- New (#1, #2)\n"
     changelog.write_text(f"## {META_VERSION}\n\nLast.\n")
     assert release.main(["notes", tag], repo) == 0
     assert capsys.readouterr().out == "Last.\n"
+
+
+def test_notes_format(repo: Path) -> None:
+    """The grouped sections become `##` sections, in the order of the format.
+
+    Args:
+        repo: Repository root.
+    """
+    changelog = repo / "meta" / "CHANGELOG.md"
+
+    def notes(section: str) -> str:
+        changelog.write_text(f"# Changelog\n\n## {META_VERSION}\n\n{section}")
+        return release.notes(META_TAG, repo)
+
+    sections = "".join(f"### {name}\n\n- A (#1)\n\n" for name in release.SECTIONS)
+    assert (
+        notes(f"Intro.\n\n{sections}")
+        == "Intro.\n\n" + sections.replace("### ", "## ").rstrip("\n") + "\n"
+    )
+    # Deeper headings move up as well; code blocks and issue numbers stay
+    text = (
+        "Intro, see\n#12.\n\n### Fixes\n\n#### Plugin\n\n```toml\n### x\n```\n\n"
+        "~~~\n# y\n~~~\n"
+    )
+    assert notes(text) == (
+        "Intro, see\n#12.\n\n## Fixes\n\n### Plugin\n\n```toml\n### x\n```\n\n"
+        "~~~\n# y\n~~~\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("section", "message"),
+    [
+        ("### Features\n\n- A (#1)\n", "has no intro paragraph"),
+        ("Intro.\n\n### Changes\n\n- A (#1)\n", "unknown section 'Changes'"),
+        (
+            "Intro.\n\n### Fixes\n\n- A (#1)\n\n### Features\n\n- B (#2)\n",
+            "'Features' after 'Fixes'",
+        ),
+        (
+            "Intro.\n\n### Fixes\n\n- A (#1)\n\n### Fixes\n\n- B (#2)\n",
+            "'Fixes' after 'Fixes'",
+        ),
+        ("Intro.\n\n# Title\n", "heading '# Title'"),
+        ("Intro.\n\n```\n### Fixes\n", "unclosed code block"),
+    ],
+)
+def test_notes_format_refused(repo: Path, section: str, message: str) -> None:
+    """Sections without intro, with unknown or unordered sections are refused.
+
+    Args:
+        repo: Repository root.
+        section: Section of the version, without its heading.
+        message: Expected error message.
+    """
+    changelog = repo / "meta" / "CHANGELOG.md"
+    changelog.write_text(f"# Changelog\n\n## {META_VERSION}\n\n{section}")
+    with pytest.raises(ValueError, match=re.escape(message)):
+        release.notes(META_TAG, repo)
+
+
+class Response:
+    """A response of PyPI, as a context manager (cf. `urlopen()`)."""
+
+    def __enter__(self) -> "Response":
+        """Enter the context.
+
+        Returns:
+            The response.
+        """
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        """Leave the context.
+
+        Args:
+            args: Exception, if any.
+        """
+
+
+def fake_pypi(published: set[str], error: Exception | None = None) -> Any:
+    """Make a fake `urlopen()` of PyPI's JSON API.
+
+    Args:
+        published: URLs of the published releases.
+        error: Error raised for any other URL; HTTP 404 by default.
+
+    Returns:
+        A function like `urlopen()`, which records the URLs and timeouts.
+    """
+    calls: list[tuple[str, float]] = []
+
+    def urlopen(url: str, timeout: float) -> Response:
+        calls.append((url, timeout))
+        if url in published:
+            return Response()
+        raise error or HTTPError(url, 404, "Not Found", Message(), None)
+
+    urlopen.calls = calls  # type: ignore[attr-defined]
+    return urlopen
+
+
+def pypi_url(name: str, version: str) -> str:
+    """Get the URL of a release in PyPI's JSON API.
+
+    Args:
+        name: Distribution.
+        version: Version.
+
+    Returns:
+        URL.
+    """
+    return f"https://pypi.org/pypi/{name}/{version}/json"
+
+
+def test_unpublished(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The meta distribution's pins that are not on PyPI are listed.
+
+    Args:
+        repo: Repository root.
+        monkeypatch: Patches.
+    """
+    a = "foca-plugin-tes-routing-a==1.0.0"
+    b = "foca-plugin-tes-routing-b==0.2.0rc1"
+    set_extras(repo, f'tes = ["{a}", "{b}"]\nall = ["{a}"]\nexperimental = ["{b}"]')
+    urlopen = fake_pypi({pypi_url("foca-plugin-tes-routing-a", "1.0.0")})
+    monkeypatch.setattr(release, "urlopen", urlopen)
+    assert release.unpublished(META_TAG, repo) == [b]
+    # Each pin once, with a timeout
+    assert [url for url, _ in urlopen.calls] == [
+        pypi_url("foca-plugin-tes-routing-a", "1.0.0"),
+        pypi_url("foca-plugin-tes-routing-b", "0.2.0rc1"),
+    ]
+    assert all(timeout > 0 for _, timeout in urlopen.calls)
+    # Plugins pin nothing
+    new_plugin.create("tes", "routing", "distance", repo)
+    assert release.unpublished("foca-plugin-tes-routing-distance-v0.1.0", repo) == []
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        HTTPError("u", 503, "Service Unavailable", Message(), None),
+        URLError("no network"),
+    ],
+)
+def test_unpublished_errors(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """Other errors than HTTP 404 are refused, not taken as "unpublished".
+
+    Args:
+        repo: Repository root.
+        monkeypatch: Patches.
+        error: Error of PyPI.
+    """
+    set_extras(repo, 'tes = ["foca-plugin-tes-routing-a==1.0.0"]')
+    monkeypatch.setattr(release, "urlopen", fake_pypi(set(), error))
+    with pytest.raises(ValueError, match="Can't check foca-plugin-tes-routing-a"):
+        release.unpublished(META_TAG, repo)
+
+
+def test_main_pins(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The `pins` command fails if a pinned version is not on PyPI.
+
+    Args:
+        repo: Repository root.
+        monkeypatch: Patches.
+        capsys: Captured output.
+    """
+    monkeypatch.setattr(release, "urlopen", fake_pypi(set()))
+    assert release.main(["pins", META_TAG], repo) == 0
+    set_extras(repo, 'tes = ["foca-plugin-tes-routing-a==1.0.0"]')
+    assert release.main(["pins", META_TAG], repo) == 1
+    error = capsys.readouterr().err
+    assert "::error::" in error
+    assert "foca-plugin-tes-routing-a==1.0.0" in error
 
 
 def test_main(repo: Path, capsys: pytest.CaptureFixture[str]) -> None:

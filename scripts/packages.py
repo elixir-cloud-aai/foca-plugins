@@ -57,6 +57,8 @@ VERSION_PATTERN = re.compile(
 # followed by a date), and of the changes not released yet
 CHANGELOG_HEADING = re.compile(r"^## (?P<version>\S+)", re.MULTILINE)
 UNRELEASED = "Unreleased"
+# Exact pins of plugins in the extras of the meta distribution
+PIN_PATTERN = re.compile(r"(?P<name>[a-z0-9-]+)==(?P<version>[^\s;,]+)")
 # Changes of these affect no package: they are checked by the jobs `lint`
 # and `docs` (`LICENSE` copies by `scripts/checks.py`)
 UNSHARED = re.compile(
