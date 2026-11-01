@@ -7,6 +7,17 @@ Features, Security, Fixes, Documentation, Maintenance; empty ones left
 out), each entry with its issue and pull request numbers (see "Releasing"
 in the docs).
 
+## 0.1.1
+
+Support for FOCA 0.19: the plugin now installs alongside FOCA 0.18 and
+0.19. It still caches lookups per process, not in FOCA 0.19's plugin
+store.
+
+### Maintenance
+
+- Support FOCA 0.19 (`foca>=0.18.0,<0.20`), tested against FOCA 0.18.0,
+  0.19.0 and `dev` (#32, #PRNUM).
+
 ## 0.1.0
 
 First release of the plugin: routing of TES tasks to the backends closest

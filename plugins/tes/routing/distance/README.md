@@ -18,7 +18,8 @@ successor of proTES's distance-based task distribution.
 | Capabilities | `routing-by-data-locality` |
 | Maturity | experimental |
 | Data transfers | none by default; with `provider: dbip`, db-ip.com and Nominatim (see [Data transfers](#data-transfers)) |
-| FOCA | 0.18 (`>=0.18.0,<0.19`) |
+| Data stored | none (no plugin store) |
+| FOCA | 0.18, 0.19 (`>=0.18.0,<0.20`) |
 
 ## What it does
 
@@ -67,8 +68,8 @@ the entry expires, not per task: `cache_ttl` (1 day) for locations,
 `cache_miss_ttl` (1 hour) for misses and `cache_failure_ttl` (1 minute)
 for failed lookups (e.g., a service is down; not lookups that only ran
 out of time), at most `cache_size` addresses (the least recently used go
-first). FOCA 0.18 gives plugins no
-database, so the cache is not shared between processes.
+first). The cache doesn't use FOCA 0.19's plugin store yet (#21), so it
+is not shared between processes.
 
 Name resolution can't be interrupted, and hosts of inputs come from
 clients, so slow or hostile name servers must not tie up the gateway's

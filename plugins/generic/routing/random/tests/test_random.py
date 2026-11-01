@@ -124,12 +124,13 @@ def test_plugin_class_is_valid(api: str) -> None:
 
 
 def test_plugin_class_describes_itself() -> None:
-    """The class routes only, describes itself and sends no data out."""
+    """The class routes only, describes itself, sends no data out, stores none."""
     assert Random.phases() == ("route",)
     title, description = Random.summary()
     assert title == "Route to the candidates in random order."
     assert description.startswith("Returns all candidate backends")
     assert Random.data_transfers == ()
+    assert Random.data_stored == ()
 
 
 def test_plugin_meets_contract() -> None:

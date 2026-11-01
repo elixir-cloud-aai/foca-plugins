@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 name = "foca-plugin-generic-routing-random"
 # SemVer, bumped in the release pull request (tag
 # `foca-plugin-generic-routing-random-v<version>`; see "Releasing" in the docs)
-version = "0.1.0"
+version = "0.1.1"
 description = "FOCA gateway plugin that routes requests to the backends in random order"
 readme = "README.md"
 # FOCA's `requires-python` (plugins run in the environments of FOCA apps)
@@ -37,9 +37,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    # The plugin API of FOCA 0.18 (`foca.plugins`); raise the upper bound once
-    # CI has tested the next minor version
-    "foca>=0.18.0,<0.19",
+    # The plugin API of FOCA 0.18 and 0.19 (`foca.plugins`, API version 1);
+    # raise the upper bound once CI has tested the next minor version
+    "foca>=0.18.0,<0.20",
     "pydantic>=2.7,<3",
 ]
 

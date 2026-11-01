@@ -288,6 +288,9 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
         "OpenStreetMap Nominatim (or the instance the admin configures): city,"
         " region and country of those addresses; only with provider 'dbip'",
     )
+    # Nothing in the plugin store: lookups are cached per process (listed by
+    # FOCA 0.19; declared here, as FOCA 0.18 has no such attribute)
+    data_stored = ()
 
     provider: Provider
     cache: TtlCache[str, Location | None]

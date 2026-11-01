@@ -116,9 +116,10 @@ jobs:
   # 3.15, its `requires-python` and classifiers), and the default (3.13, the
   # newest in its security phase), which reports coverage with the entry
   # marked `coverage`; all gate, as in FOCA. FOCA: the lowest supported
-  # version (0.18.0, the first with the plugin API) and FOCA's `dev` branch,
-  # so that changes of the plugin API show before FOCA releases them (raise
-  # the lowest version with the plugins' lower bounds)
+  # version (0.18.0, the first with the plugin API), the newest release
+  # (0.19.0) and FOCA's `dev` branch, so that changes of the plugin API show
+  # before FOCA releases them (raise the lowest version with the plugins'
+  # lower bounds, and the newest with their upper bounds)
   test:
     name: Test (${{ matrix.package.name }}, Python ${{ matrix.python-version }}, FOCA ${{ matrix.foca }})
     needs: changes
@@ -130,12 +131,14 @@ jobs:
       matrix:
         package: ${{ fromJSON(needs.changes.outputs.packages) }}
         python-version: ["3.11", "3.13", "3.15"]
-        foca: ["0.18.0", dev]
+        foca: ["0.18.0", "0.19.0", dev]
         include:
           - foca: "0.18.0"
             foca-spec: "foca==0.18.0"
             # The entry that reports coverage (with the default Python)
             coverage: true
+          - foca: "0.19.0"
+            foca-spec: "foca==0.19.0"
           - foca: dev
             foca-spec: "foca @ git+https://github.com/elixir-cloud-aai/foca@dev"
     env:
