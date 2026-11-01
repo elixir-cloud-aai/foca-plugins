@@ -24,6 +24,13 @@ authors:
     affiliation: >-
       Biozentrum, University of Basel, Basel, Switzerland; SIB Swiss Institute
       of Bioinformatics, Lausanne, Switzerland
+doi: 10.5281/zenodo.23858996
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.23858996
+    description: >-
+      Concept DOI of all versions on Zenodo; it always resolves to the latest
+      version
 repository-code: "https://github.com/elixir-cloud-aai/foca-plugins"
 url: "https://foca-plugins.readthedocs.io/"
 keywords:
