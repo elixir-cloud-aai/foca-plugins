@@ -1,16 +1,20 @@
-# Everything that must pass on pull requests and pushes to `dev`: change
-# detection, lint (incl. building and checking all distributions), the tests
-# of each affected plugin (ruff, mypy, pytest at 100% coverage, ast-grep,
-# pip-audit) over the supported Python and FOCA versions, the tests of the
-# repository's scripts, and the docs. The gate `passed` ("CI passed") is the
-# only required check. No `paths:` filters, so that the gate always reports;
-# jobs are skipped with `if:` instead (and the gate allows that skip)
+# Everything that must pass on pull requests and pushes to `dev`: the pull
+# request title, change detection, lint (incl. building and checking all
+# distributions), the tests of each affected plugin (ruff, mypy, pytest at
+# 100% coverage, ast-grep, pip-audit) over the supported Python and FOCA
+# versions, the tests of the repository's scripts, and the docs. The gate
+# `passed` ("CI passed") is the only required check. No `paths:` filters, so
+# that the gate always reports; jobs are skipped with `if:` instead (and the
+# gate allows that skip). Runs also when a pull request is edited, so that
+# the title check follows the title; all jobs run then, as a run that
+# skipped the tests would report "CI passed" for the commit
 
 name: CI
 on:
   push:
     branches: [dev]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     branches: [dev]
 
 permissions:
@@ -23,12 +27,39 @@ env:
   UV_VERSION: "0.12.13"
 
 # Cancel superseded runs of a pull request; runs for pushes get their own
-# group, so that queued runs for successive pushes are not dropped
+# group, so that queued runs for successive pushes are not dropped. Runs for
+# edits that leave the title unchanged (e.g. of the description, also by
+# bots) share a group of their own, so that they cancel each other but not
+# the run for the pull request's commit
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  group: >-
+    ${{ github.workflow }}-${{
+      github.event_name == 'push' && github.sha ||
+      github.event.action == 'edited' && !github.event.changes.title &&
+        format('{0}-edited', github.ref) ||
+      github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Pull request titles become the commit messages on `dev` (squash merges):
+  # Conventional Commits, at most 50 characters (shared action of
+  # elixir-cloud-aai/.github, pinned to the commit of a release). Skipped on
+  # pushes and for Dependabot, whose titles can't be configured to pass,
+  # unless someone else edits the title
+  title:
+    name: PR title
+    if: >-
+      github.event_name == 'pull_request' && (
+        github.event.pull_request.user.login != 'dependabot[bot]' ||
+        github.event.changes.title &&
+        github.event.sender.login != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Check PR title
+        uses: elixir-cloud-aai/.github/actions/pr-title@743e82d290a53768454999e413756a924e383259 # v1.0.0
+
   # Maps the changed files to the plugins that they affect
   # (`python -m scripts.packages changed`, see there for the rules): a
   # plugin's directory affects that plugin; the meta distribution and shared
@@ -260,14 +291,15 @@ jobs:
         run: uv run --no-sync mkdocs build --strict
   # The only required check: passes if every other job passed, or was skipped
   # where that is intended: `test` if no plugin is affected (the matrix would
-  # be empty). Any other result (failure, cancelled, or an unintended skip)
-  # fails it. Add every new job to `needs`
+  # be empty), `title` on pushes and for Dependabot. Any other result
+  # (failure, cancelled, or an unintended skip) fails it. Add every new job
+  # to `needs`
   passed:
     name: CI passed
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
-    needs: [changes, lint, test, scripts, docs]
+    needs: [title, changes, lint, test, scripts, docs]
     steps:
       - name: Check results of all jobs
         env:
@@ -279,6 +311,7 @@ jobs:
             | select(
                 .value.result == "success"
                 or (.value.result == "skipped" and .key == "test" and $none)
+                or (.value.result == "skipped" and .key == "title")
                 | not)
             | "\(.key): \(.value.result)"' <<< "${NEEDS}")"
           if [[ -n "${failed}" ]]; then
