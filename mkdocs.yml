@@ -80,5 +80,5 @@ nav:
   - Installing: installing.md
   - Writing a plugin: writing-plugins.md
   - Plugin catalogue: catalogue.md
-  - Contributing: contributing.md
+  - Contributing: contributing/index.md
   - Releasing: releasing.md

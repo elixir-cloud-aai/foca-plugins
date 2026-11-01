@@ -34,7 +34,7 @@
 - [Writing a plugin](writing-plugins.md): the conventions of this
   repository and the template.
 - [Plugin catalogue](catalogue.md): the plugins of this repository.
-- [Contributing](contributing.md): development setup, checks, pull requests,
+- [Contributing](contributing/index.md): development setup, checks, pull requests,
   commit messages and the Python guidelines.
 - [Releasing](releasing.md): versions, tags, changelogs and the release
   workflow.

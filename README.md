@@ -99,7 +99,7 @@ as APA or BibTeX.
 
 ## Contributing
 
-Contributions are welcome! See [`CONTRIBUTING.md`](CONTRIBUTING.md) and
+Contributions are welcome! See the [contributing guide](https://github.com/elixir-cloud-aai/.github/blob/main/CONTRIBUTING.md) and
 [Contributing][docs-contributing] in the documentation, and mind our [code of
 conduct](CODE_OF_CONDUCT.md). To start a plugin, run
 `python scripts/new_plugin.py <group> <subgroup> <name>` (see [Writing a
