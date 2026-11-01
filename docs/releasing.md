@@ -147,8 +147,8 @@ Each PyPI project trusts this workflow file (`release.yml`) in the
 environment `release`. When the environment or the workflow file is renamed,
 update the trusted publisher of every existing project on PyPI (Manage
 project > Publishing), and the pending publisher of a distribution not
-released yet, before the next tag of each: until then, its **Publish to
-PyPI** job fails (the tag then exists already; fix the publisher and
+released yet, before the next tag of each: until then, its **Release
+package** job fails (the tag then exists already; fix the publisher and
 **Re-run failed jobs**). The rename of the environment from `pypi` to
 `release` (2026-10, #25) was done this way for
 `foca-plugin-generic-routing-random`, `foca-plugin-tes-routing-distance` and
@@ -186,28 +186,36 @@ deletion; the workflow fails if a tag moves during the run, but only the
 ruleset stops a tag from pointing at other code than its published
 files):
 
-1. **Build distributions:** first, before anything is installed or built,
+1. **Prepare release** (job `prepare`): first, before anything is installed or built,
    checks that the tag names a package and its version on that commit and
    that the package may be published (the example plugin
    `generic.example.noop` never is); then that the commit is on `main`, the
    conventions hold, the changelog has the version's notes in the format
    above and, for the meta distribution, that its pinned plugin versions are
    on PyPI. It builds
-   the wheel and sdist with pinned tools (uv by `astral-sh/setup-uv`, pinned
+   the wheel and sdist (after making the relative image paths of the
+   package's README absolute URLs pinned to the tag, which PyPI needs to show
+   them; `scripts/readme_images.py`) with pinned tools (uv by `astral-sh/setup-uv`, pinned
    by commit, which verifies uv's checksum; the build backend pinned with
    `build-constraint-dependencies`) and checks them (only the package's own
    module, its license, its `py.typed`, and `twine check` with twine from
    `uv.lock`).
-2. **Attest distributions:** GitHub artifact attestations (SLSA build
+2. **Attest distributions** (`attest`): GitHub artifact attestations (SLSA build
    provenance).
-3. **Publish to PyPI:** fails if the tag no longer points to the built
+3. **Release package** (`pypi`): fails if the tag no longer points to the built
    commit; then trusted publishing (OIDC, no API token) from the
    protected `release` environment, with PEP 740 attestations; already
    uploaded files are skipped, so re-runs of failed jobs complete an upload.
-4. **Publish release:** checks the tag again; the GitHub release of the
+4. **Publish release** (`publish`): checks the tag again; the GitHub release of the
    tag, with the notes above and the distributions as assets, created as a
    draft and published last. A release published already must have exactly
    the built distributions (by SHA-256), or the job fails.
+
+The job IDs and names are those of the release workflows of the
+organisation's other repositories where the jobs do the same (`prepare`,
+`pypi`, `publish`). Renaming the jobs does not affect the required checks
+(only `CI passed`), nor PyPI's trusted publishers (they name the workflow
+file and the environment, not the jobs).
 
 Renaming the workflow file or the environment `release` breaks publishing
 until the trusted publishers are updated on PyPI (see [Steps](#steps)).

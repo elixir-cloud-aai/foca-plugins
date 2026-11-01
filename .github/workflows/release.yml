@@ -3,13 +3,13 @@
 # is pushed. Fails safe: before anything is built, the tag is checked
 # against the package (`python -m scripts.release release`: a package of
 # this repository, its version on the tagged commit, not the example plugin)
-# and the commit against `main`. Then it builds the distributions with
-# pinned tools, attests their build provenance (GitHub artifact
-# attestations), publishes them to PyPI with trusted publishing (no API
-# token; each PyPI project trusts this workflow file in the `release`
-# environment) and PEP 740 attestations, and creates the GitHub release with
-# the notes of the package's `CHANGELOG.md` and its commits since its
-# previous tag. No manual steps: "Re-run failed jobs" completes a partially
+# and the commit against `main` (job `prepare`). Then it builds the
+# distributions with pinned tools (`prepare`), attests their build provenance
+# (`attest`; GitHub artifact attestations), releases them to PyPI (`pypi`)
+# with trusted publishing (no API token; each PyPI project trusts this
+# workflow file in the `release` environment) and PEP 740 attestations, and
+# creates the GitHub release (`publish`) with the notes of the package's
+# `CHANGELOG.md` and its commits since its previous tag. No manual steps: "Re-run failed jobs" completes a partially
 # failed release with the distributions of the first attempt. Never use
 # "Re-run all jobs": it builds again, and sdists aren't reproducible (the
 # build backend stores file times), so PyPI and the GitHub release would get
@@ -38,8 +38,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: Build distributions
+  prepare:
+    name: Prepare release
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -110,6 +110,20 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           enable-cache: false
+      # PyPI can't resolve the relative image paths of the package's README:
+      # they become absolute URLs pinned to the release tag, so the long
+      # description of the package shows the images (the paths are relative
+      # to the package's directory, as on GitHub; `scripts/readme_images.py`)
+      - name: Make README image paths absolute
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          PACKAGE: ${{ steps.package.outputs.path }}
+        run: |
+          python -m scripts.readme_images rewrite \
+              "https://raw.githubusercontent.com/${REPOSITORY}/${TAG}/${PACKAGE}" \
+              "${PACKAGE}/README.md"
+          python -m scripts.readme_images check "${PACKAGE}/README.md"
       # The build backend is pinned (`build-constraint-dependencies` in the
       # root `pyproject.toml`). The commit's time as the build time makes the
       # wheels reproducible. No `.gitignore` in `dist/` (uv writes one by
@@ -146,7 +160,7 @@ jobs:
   # attestations), verifiable with `gh attestation verify`
   attest:
     name: Attest distributions
-    needs: build
+    needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -170,13 +184,13 @@ jobs:
   # workflow file (`release.yml`) and the environment `release`; renaming
   # either breaks publishing until the maintainer updates PyPI
   pypi:
-    name: Publish to PyPI
-    needs: [build, attest]
+    name: Release package
+    needs: [prepare, attest]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
       name: release
-      url: https://pypi.org/project/${{ needs.build.outputs.name }}/${{ needs.build.outputs.version }}/
+      url: https://pypi.org/project/${{ needs.prepare.outputs.name }}/${{ needs.prepare.outputs.version }}/
     permissions:
       id-token: write
     steps:
@@ -204,7 +218,7 @@ jobs:
           fi
       # PEP 740 attestations (Sigstore) for every file, made by the action
       # with the workflow's OIDC identity
-      - name: Publish to PyPI
+      - name: Upload to PyPI
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           attestations: true
@@ -214,7 +228,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [build, pypi]
+    needs: [prepare, pypi]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -260,9 +274,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-          NAME: ${{ needs.build.outputs.name }}
-          PACKAGE: ${{ needs.build.outputs.path }}
-          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+          NAME: ${{ needs.prepare.outputs.name }}
+          PACKAGE: ${{ needs.prepare.outputs.path }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
           # The tag must still name the built commit (cf. job `pypi`)
           commit="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | cut -f 1)"
