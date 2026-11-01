@@ -13,7 +13,9 @@ Commands, run from the repository root as `python -m scripts.checks
   `stable` or `deprecated`, or in `[experimental]` if it is `experimental`
   (the `maturity` of its class), and every pinned plugin has the source
   `{ workspace = true }` in the meta distribution's `[tool.uv.sources]`
-  (without it, uv refuses the workspace).
+  (without it, uv refuses the workspace); and the changelog section of each
+  package's current version, if it has one, is valid release notes
+  (`python -m scripts.release notes`: intro, grouped sections in order).
 - `dist DIR` (`ci.yml`, job `lint`, and `release.yml`): the distributions
   in a directory (e.g., of `uv build --all-packages`): each of a package of the
   repository, of its version, with its license, its `py.typed` and only its
@@ -36,6 +38,7 @@ from scripts.packages import (
     GROUPS,
     META_NAME,
     NAME_PATTERN,
+    PIN_PATTERN,
     PLUGINS,
     PRIVATE_CLASSIFIER,
     ROOT,
@@ -48,8 +51,8 @@ from scripts.packages import (
     plugins,
     released_versions,
 )
+from scripts.release import notes
 
-PIN_PATTERN = re.compile(r"(?P<name>[a-z0-9-]+)==(?P<version>[^\s;,]+)")
 # FOCA's default maturity of plugins (`foca.plugins.Plugin.maturity`)
 DEFAULT_MATURITY = "experimental"
 # The extra of the meta distribution for each maturity
@@ -270,6 +273,31 @@ def _check_meta(
     return problems
 
 
+def _check_notes(package: Package, root: Path) -> list[str]:
+    """Check the release notes of a package's current version.
+
+    Args:
+        package: Package.
+        root: Repository root.
+
+    Returns:
+        Why its changelog section can't be the release notes (cf.
+        `scripts.release.notes()`), if the version is released (has a
+        section) and the package may be published.
+    """
+    version = package_version(package, root)
+    project = load_pyproject(root / package.path / "pyproject.toml")["project"]
+    if PRIVATE_CLASSIFIER in project.get("classifiers", []) or version not in (
+        released_versions(package, root)
+    ):
+        return []
+    try:
+        notes(f"{package.name}-v{version}", root)
+    except ValueError as error:
+        return [str(error)]
+    return []
+
+
 def check(root: Path = ROOT) -> list[str]:
     """Check the conventions of all packages.
 
@@ -289,6 +317,9 @@ def check(root: Path = ROOT) -> list[str]:
             else _check_meta(package, packages, root, license_text)
         )
         problems.extend(f"{package.path}: {problem}" for problem in found)
+        problems.extend(
+            f"{package.path}: {problem}" for problem in _check_notes(package, root)
+        )
     names = [package.name for package in packages]
     for name in sorted({name for name in names if names.count(name) > 1}):
         problems.append(f"distribution {name!r} is not unique")

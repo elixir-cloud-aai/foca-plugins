@@ -73,10 +73,11 @@ repos:
         types: [python]
         pass_filenames: false
       # Names, entry points, namespace packages, files and licenses of the
-      # packages, and the pins of the meta distribution
+      # packages, the pins of the meta distribution, and the release notes of
+      # the current versions
       - id: packages
         name: package conventions
         entry: python -m scripts.checks check
         language: system
-        files: ^(LICENSE|meta/|plugins/|scripts/packages\.py$)
+        files: ^(LICENSE|meta/|plugins/|scripts/(checks|packages|release)\.py$)
         pass_filenames: false

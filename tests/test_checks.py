@@ -111,7 +111,28 @@ def release(target: Path) -> None:
     Args:
         target: Directory of the plugin.
     """
+    replace(target / "CHANGELOG.md", "## Unreleased", "## 0.1.0\n\nFirst release.")
+
+
+def test_check_notes(repo: Path) -> None:
+    """The section of a package's current version must be valid notes.
+
+    Args:
+        repo: Repository root.
+    """
+    target = new_plugin.create("tes", "routing", "distance", repo)
+    pin = '["foca-plugin-tes-routing-distance==0.1.0"]'
+    set_extras(repo, f"tes = {pin}\ntes-routing = {pin}\nexperimental = {pin}")
     replace(target / "CHANGELOG.md", "## Unreleased", "## 0.1.0")
+    assert checks.check(repo) == [
+        f"{DISTANCE.path}: The section of 0.1.0 has no intro paragraph"
+    ]
+    # Only the current version's: older sections and the example are left out
+    replace(target / "CHANGELOG.md", "## 0.1.0", "## 0.1.0\n\nFirst.")
+    changelog = (target / "CHANGELOG.md").read_text()
+    (target / "CHANGELOG.md").write_text(f"{changelog}\n## 0.0.1\n\n### Other\n")
+    replace(repo / NOOP.path / "CHANGELOG.md", "## Unreleased", "## 0.1.0")
+    assert checks.check(repo) == []
 
 
 def test_check_meta_pins(repo: Path) -> None:
