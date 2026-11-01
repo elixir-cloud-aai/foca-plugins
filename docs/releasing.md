@@ -79,11 +79,12 @@ the format of all release notes of the organization:
 `python -m scripts.release notes <tag>` prints items 1 and 2, and refuses a
 section without an intro paragraph, with unknown sections or with sections
 in another order, with headings of level 1 or 2 (also setext headings: a
-line of only `=` or `-` right below text), with deeper headings before the
-first grouped section, or with an unclosed code block (HTML comments aren't
-skipped: keep headings out of them). `python -m scripts.checks check`
-(pre-commit and CI) checks the section of each package's current version the same way, so that
-the release pull request fails rather than the tag. The previous tag is the
+line of only `=` or `-` right below paragraph text), with deeper headings
+before the first grouped section, or with an unclosed code block (HTML
+comments aren't skipped: keep headings out of them).
+`python -m scripts.checks check` (pre-commit and CI) checks the section of
+each package's current version the same way, so that the release pull
+request fails rather than the tag. The previous tag is the
 newest tag of the same distribution (`<distribution>-v<version>`, not those
 of other packages) among the ancestors of the tagged commit, pre-releases
 included (`python -m scripts.release previous`).

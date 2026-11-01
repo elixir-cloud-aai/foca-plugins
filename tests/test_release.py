@@ -1,6 +1,7 @@
 """Tests of `scripts/release.py`."""
 
 from email.message import Message
+from http.client import RemoteDisconnected
 import json
 from pathlib import Path
 import re
@@ -117,6 +118,13 @@ def test_notes_format(repo: Path) -> None:
         "Intro, `x`\n```a```.\n\n  ## Fixes ##\n\n````\n```\n    ````\n````\n\n"
         " ~~~\n### x\n   ~~~  \n\n- B (#2)\n"
     )
+    # Lines of `-` or `=` after other lines than paragraph text are thematic
+    # breaks or text, not setext headings
+    text = (
+        "Intro.\n\n### Fixes\n---\n- A (#1)\n---\n```\nx\n```\n---\n> q\n===\n\n"
+        "- B (#2)\n"
+    )
+    assert notes(text) == text.replace("### ", "## ")
 
 
 @pytest.mark.parametrize(
@@ -251,6 +259,8 @@ def test_unpublished(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     [
         HTTPError("u", 503, "Service Unavailable", Message(), None),
         URLError("no network"),
+        TimeoutError("timed out"),
+        RemoteDisconnected("closed"),
     ],
 )
 def test_unpublished_errors(

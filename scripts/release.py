@@ -24,12 +24,13 @@ GitHub error annotations:
 import argparse
 from collections.abc import Sequence
 from dataclasses import asdict
+from http.client import HTTPException
 import json
 from pathlib import Path
 import re
 import subprocess
 import sys
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import urlopen
 
@@ -62,6 +63,9 @@ HEADING = re.compile(
     r" {0,3}(?P<level>#{1,6})(?:[ \t]+(?P<title>.*?)(?:[ \t]+#+)?)?[ \t]*"
 )
 UNDERLINE = re.compile(r" {0,3}(=+|-+)[ \t]*")
+# Lines of top-level paragraph text: not blank or indented, and not of a
+# list item or block quote
+PARAGRAPH = re.compile(r"(?![-*+][ \t]|[0-9]+[.)][ \t]|>)\S")
 # Opening fences of code blocks, whose lines are no headings (no backticks
 # in the info string of a backtick fence, or it is inline code)
 FENCE = re.compile(r" {0,3}(?P<fence>`{3,}(?!.*`)|~{3,})")
@@ -152,9 +156,13 @@ def _format(body: str, version: str) -> str:
     lines: list[str] = []
     closing: re.Pattern[str] | None = None
     found: list[str] = []
+    # Whether the previous line is paragraph text, which a line of `=` or `-`
+    # makes a setext heading (after other lines, `---` is a thematic break)
+    paragraph = False
     for line in body.splitlines():
         heading = HEADING.fullmatch(line)
         opening = FENCE.match(line)
+        after_paragraph, paragraph = paragraph, False
         if closing is not None:
             if closing.fullmatch(line):
                 closing = None
@@ -164,7 +172,7 @@ def _format(body: str, version: str) -> str:
             closing = re.compile(
                 rf" {{0,3}}{re.escape(fence[0])}{{{len(fence)},}}[ \t]*"
             )
-        elif lines and lines[-1].strip() and UNDERLINE.fullmatch(line):
+        elif after_paragraph and UNDERLINE.fullmatch(line):
             raise ValueError(f"{prefix} has a heading {lines[-1].strip()!r}")
         elif heading is not None:
             level, title = heading["level"], heading["title"] or ""
@@ -190,6 +198,8 @@ def _format(body: str, version: str) -> str:
                 found.append(title)
             lines.append(line.replace("#", "", 1))
             continue
+        else:
+            paragraph = PARAGRAPH.match(line) is not None
         lines.append(line)
     if closing is not None:
         raise ValueError(f"{prefix} has an unclosed code block")
@@ -238,7 +248,9 @@ def unpublished(tag: str, root: Path = ROOT) -> list[str]:
             if error.code != 404:
                 raise ValueError(f"Can't check {pin} on PyPI: {error}") from error
             missing.append(pin)
-        except URLError as error:
+        # Also errors while reading the response (e.g., timeouts), which
+        # `urlopen()` doesn't wrap in `URLError`
+        except (OSError, HTTPException) as error:
             raise ValueError(f"Can't check {pin} on PyPI: {error}") from error
     return missing
 
