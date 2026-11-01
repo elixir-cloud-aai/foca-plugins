@@ -2,51 +2,12 @@
 
 This project is a community effort and lives off your contributions, be it
 bug reports, feature requests, new plugins, discussions, documentation or
-code. It follows the [contributor guide of ELIXIR
-On-Cloud](https://elixir-cloud-aai.github.io/contribute/), which also
-describes the project's values and what it offers regular contributors;
-this page sums up how it applies to this repository.
-
-Please follow the [code of
-conduct](https://github.com/elixir-cloud-aai/.github/blob/main/CODE_OF_CONDUCT.md)
-in all interactions with the community. To report a violation, email
-[cloud-service@elixir-europe.org](mailto:cloud-service@elixir-europe.org).
-
-Report vulnerabilities privately, not in issues, as described in the
-[security
-policy](https://github.com/elixir-cloud-aai/foca-plugins/blob/dev/SECURITY.md).
-
-## Getting started
-
-1. Find an issue in the [issue
-   tracker](https://github.com/elixir-cloud-aai/foca-plugins/issues), or open
-   one (see [Issues](#issues)).
-2. Join the ELIXIR On-Cloud chat and introduce yourself in the open source
-   community channel: your skills and experience, your GitHub username and
-   the issues you are interested in (see the
-   [workflow](https://elixir-cloud-aai.github.io/contribute/workflow/); send
-   a direct message to a project lead instead if you don't want to share
-   these publicly). Once you are a member of the GitHub organization, you can
-   assign issues to yourself.
-3. Set up a development environment (see [Development](#development)) and
-   start coding; for a new plugin, see [Writing a plugin](writing-plugins.md).
-
-One-time contributors can skip the second step and open pull requests from
-forks; some checks may need a maintainer's approval to run for them.
-
-## Issues
-
-Use the issue tracker to propose plugins and features, report bugs and
-discuss existing issues; use the chat for questions and informal
-discussions. Write issues concisely, but with enough detail and context
-(links, logs, configurations without secrets) for others to start working
-on them; bug reports need steps to reproduce, and proposals of plugins say
-what the plugin does, in which phases, and which data it sends to third
-parties. The maintainers add labels and milestones.
-
-**Always work on an issue:** before you change code, make sure there is an
-issue for it and that the maintainers agree with the approach, so that no
-work is in vain.
+code. It follows the [contributing guide of ELIXIR
+On-Cloud](https://github.com/elixir-cloud-aai/.github/blob/main/CONTRIBUTING.md),
+which covers getting started, issues, branches and pull requests, commit
+messages and pull request titles, the code of conduct and the security
+policy. This page covers what is specific to this repository; for a new
+plugin, see [Writing a plugin](../writing-plugins.md).
 
 ## Development
 
@@ -73,7 +34,7 @@ other hooks, which takes a few minutes.
 CI tests each plugin on its own, in an environment with only that plugin and
 the dev tools (`uv sync --package <distribution> --group dev`), so that a
 plugin can't rely on another's dependencies; the commands of one plugin's
-checks are in [Writing a plugin](writing-plugins.md#tests-and-checks). Its
+checks are in [Writing a plugin](../writing-plugins.md#tests-and-checks). Its
 change detection (`python -m scripts.packages changed <base> <head>`) runs
 the tests of the plugins that a pull request affects: changes of a plugin's
 directory affect that plugin; those of the meta distribution and of shared
@@ -107,7 +68,7 @@ This documentation is built with [MkDocs](https://www.mkdocs.org/) and
 [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/), from
 `docs/` and `mkdocs.yml`, by Read the Docs (`.readthedocs.yaml`) and in CI;
 warnings, e.g., of broken links, fail the build. The home page includes
-sections of `README.md`, and the [plugin catalogue](catalogue.md) is
+sections of `README.md`, and the [plugin catalogue](../catalogue.md) is
 generated from the plugins' READMEs (`docs/hooks.py`).
 
 ```bash
@@ -116,61 +77,11 @@ uv run mkdocs build --strict  # into `site/`, ignored by Git
 uv run mkdocs serve
 ```
 
-## Branches and pull requests
-
-The project follows a variant of the GitHub flow: all changes reach the
-development branch `dev` through pull requests, which are reviewed and
-tested; `main` only holds releases: it only moves forward to released
-commits (see [Releasing](releasing.md)).
-
-1. Create a feature branch from an up-to-date `dev`, named after the type and
-   topic of the change, e.g., `feat/tes-routing-distance` or `docs/<topic>`.
-2. Commit your changes, push the branch and open a pull request against `dev`
-   (not `main`) that closes the issue (`Closes #<issue>`) and says what
-   changes, why, and how you tested it.
-3. Get your pull request reviewed: once it is ready for review, automated
-   reviewers (Sourcery, GitHub Copilot) review every pull request, and a
-   maintainer also reviews external contributions. Address the comments by
-   pushing further commits or by replying why you disagree.
-4. Once the checks pass and all conversations are resolved, the maintainers
-   squash-merge the pull request into `dev`.
-
-Keep pull requests focused, on one plugin where possible: if a change can't
-be summarized in a title of 50 characters, split it into several pull
-requests.
-
 ## Commit messages and pull request titles
 
-Pull request titles, which become the commit messages on `dev`, follow the
-[Conventional Commits](https://www.conventionalcommits.org/) specification:
-
-```text
-<type>[(<scope>)][!]: <description>
-```
-
-- The whole title line has at most 50 characters. CI checks the title (job
-  `PR title`) and rechecks it when you edit it.
-- The description starts with a verb in the imperative mood (e.g., `add`,
-  `fix`) and has no trailing period.
-- `!` (and a `BREAKING CHANGE:` footer in the body) marks breaking changes.
 - The scope of a change of one plugin is its path below `plugins/`, e.g.,
   `feat(tes/routing/distance): ...`; that of the meta distribution is
   `meta`.
-- The type names the predominant reason for the change:
-
-| Type | Changes |
-| --- | --- |
-| `feat` | new functionality |
-| `fix` | bug fixes |
-| `perf` | performance improvements |
-| `refactor` | code changes that neither add features nor fix bugs |
-| `style` | formatting, docstrings and type hints of the code |
-| `build` | build system, packaging and dependencies |
-| `ci` | CI and release workflows |
-| `docs` | documentation |
-| `test` | tests |
-| `chore` | other maintenance, e.g., scripts or `.gitignore` |
-| `revert` | reverts of earlier commits |
 
 Use `feat`, `fix`, `perf`, `refactor` and `style` only for changes of what
 is published: the plugins (`plugins/`) and the meta distribution (`meta/`).
@@ -181,14 +92,10 @@ The repository is cited with the metadata in
 [`CITATION.cff`](https://github.com/elixir-cloud-aai/foca-plugins/blob/dev/CITATION.cff)
 ([Citation File Format](https://citation-file-format.github.io/)), which
 GitHub ("Cite this repository") uses. It has no version, as each
-distribution has its own. Its authors are the people who committed at least
-100 lines (lines added) to `main`, the release branch (to `dev` before the
-first release), not counting bots and generated files. They are ordered by
-lines, then by commits; equal contributors are listed alphabetically by
-family name and marked with an asterisk (*). Affiliations come from public
-ORCID records only. To add or correct your entry, open a pull request that
-changes only your entry; don't add e-mail addresses. CI validates the file
-(`cffconvert --validate`).
+distribution has its own. Its authors follow the [citation metadata rule of
+the contributing
+guide](https://github.com/elixir-cloud-aai/.github/blob/main/CONTRIBUTING.md#citation-metadata).
+CI validates the file (`cffconvert --validate`).
 
 ## Python guidelines
 
