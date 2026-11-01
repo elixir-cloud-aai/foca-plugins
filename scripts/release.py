@@ -39,6 +39,7 @@ from scripts.packages import (
     PIN_PATTERN,
     PRIVATE_CLASSIFIER,
     ROOT,
+    UNRELEASED,
     VERSION_PATTERN,
     discover,
     load_pyproject,
@@ -63,9 +64,17 @@ HEADING = re.compile(
     r" {0,3}(?P<level>#{1,6})(?:[ \t]+(?P<title>.*?)(?:[ \t]+#+)?)?[ \t]*"
 )
 UNDERLINE = re.compile(r" {0,3}(=+|-+)[ \t]*")
-# Lines of top-level paragraph text: not blank or indented, and not of a
-# list item or block quote
-PARAGRAPH = re.compile(r"(?![-*+][ \t]|[0-9]+[.)][ \t]|>)\S")
+# Lines of top-level paragraph text: not blank, indented by up to three
+# spaces, and not of a list item, block quote or thematic break
+PARAGRAPH = re.compile(
+    r" {0,3}(?![-*+]([ \t]|$)|[0-9]{1,9}[.)]([ \t]|$)|>"
+    r"|((-[ \t]*){3,}|(\*[ \t]*){3,}|(_[ \t]*){3,})$)\S"
+)
+# Headings of the versions' sections in changelogs (`## <version>`, maybe
+# followed by a date, or `## Unreleased`)
+VERSION_HEADING = re.compile(
+    rf"^## ({UNRELEASED}|{VERSION_PATTERN.pattern})([ \t].*)?$", re.M
+)
 # Opening fences of code blocks, whose lines are no headings (no backticks
 # in the info string of a backtick fence, or it is inline code)
 FENCE = re.compile(r" {0,3}(?P<fence>`{3,}(?!.*`)|~{3,})")
@@ -128,7 +137,9 @@ def notes(tag: str, root: Path = ROOT) -> str:
             f" '## {package['version']}', expected one"
         )
     match = matches[0]
-    following = re.compile(r"^## ", re.M).search(text, match.end())
+    # Up to the next version's section; other `## ` headings stay in the
+    # section, which `_format()` refuses
+    following = VERSION_HEADING.search(text, match.end())
     body = text[match.end() : following.start() if following else None].strip()
     if not body:
         raise ValueError(f"The section of {package['version']} is empty")
@@ -159,6 +170,8 @@ def _format(body: str, version: str) -> str:
     # Whether the previous line is paragraph text, which a line of `=` or `-`
     # makes a setext heading (after other lines, `---` is a thematic break)
     paragraph = False
+    # Whether paragraph text came before the first heading
+    intro = False
     for line in body.splitlines():
         heading = HEADING.fullmatch(line)
         opening = FENCE.match(line)
@@ -176,7 +189,7 @@ def _format(body: str, version: str) -> str:
             raise ValueError(f"{prefix} has a heading {lines[-1].strip()!r}")
         elif heading is not None:
             level, title = heading["level"], heading["title"] or ""
-            if not lines:
+            if not intro:
                 raise ValueError(f"{prefix} has no intro paragraph")
             if len(level) < len("###"):
                 raise ValueError(f"{prefix} has a heading {line.strip()!r}")
@@ -200,9 +213,12 @@ def _format(body: str, version: str) -> str:
             continue
         else:
             paragraph = PARAGRAPH.match(line) is not None
+            intro = intro or (paragraph and not found)
         lines.append(line)
     if closing is not None:
         raise ValueError(f"{prefix} has an unclosed code block")
+    if not intro:
+        raise ValueError(f"{prefix} has no intro paragraph")
     return "\n".join(lines)
 
 

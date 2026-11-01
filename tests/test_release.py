@@ -122,7 +122,7 @@ def test_notes_format(repo: Path) -> None:
     # breaks or text, not setext headings
     text = (
         "Intro.\n\n### Fixes\n---\n- A (#1)\n---\n```\nx\n```\n---\n> q\n===\n\n"
-        "- B (#2)\n"
+        "- B (#2)\n---\n- - -\n***\n___\n---\n"
     )
     assert notes(text) == text.replace("### ", "## ")
 
@@ -146,6 +146,18 @@ def test_notes_format(repo: Path) -> None:
         ("Intro.\nTitle\n---\n", "heading 'Title'"),
         ("Intro.\n\n### Fixes\n\nTitle\n=\n", "heading 'Title'"),
         ("Intro.\n\n```\n### Fixes\n", "unclosed code block"),
+        # Only paragraph text is an intro
+        ("- A (#1)\n\n### Fixes\n\n- B (#2)\n", "has no intro paragraph"),
+        ("> A\n\n```\nB\n```\n", "has no intro paragraph"),
+        # Setext headings below paragraph text indented by up to three spaces,
+        # or starting with numbers too long for ordered lists
+        ("Intro.\n\n   Title\n---\n", "heading 'Title'"),
+        ("Intro.\n\n1234567890. Title\n---\n", "heading '1234567890. Title'"),
+        # Other `##` headings than those of versions are in the section
+        (
+            "Intro.\n\n### Fixes\n\n- A (#1)\n\n## Other\n\n- B (#2)\n\n## 0.1.0\n",
+            "heading '## Other'",
+        ),
     ],
 )
 def test_notes_format_refused(repo: Path, section: str, message: str) -> None:
