@@ -89,6 +89,18 @@ line: `# noqa: <code>` (ruff), `# type: ignore[<code>]` (mypy),
 `# nosemgrep: <rule-id>`, `# ast-grep-ignore: <rule-id>` or
 `# gitleaks:allow`.
 
+Dependabot updates the dependencies, the GitHub Actions and the pre-commit
+hooks. Update these pinned tools by hand from time to time, as it doesn't:
+
+- the uv version (`UV_VERSION` in `ci.yml` and `release.yml`; Dependabot
+  bumps only the action `astral-sh/setup-uv`);
+- the build backend (`build-constraint-dependencies` in the root
+  `pyproject.toml`);
+- cffconvert (`ci.yml`, job `lint`).
+
+twine, the release workflow's other tool, is locked in `uv.lock`
+(dependency group `release`), so Dependabot updates it.
+
 ### Documentation
 
 This documentation is built with [MkDocs](https://www.mkdocs.org/) and
