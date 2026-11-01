@@ -13,6 +13,7 @@
 [![Build_status][badge-build-status]][badge-url-build-status]
 [![Docs][badge-docs]][badge-url-docs]
 [![Coverage][badge-coverage]][badge-url-coverage]
+[![DOI][badge-doi]][badge-url-doi]
 
 <!-- --8<-- [start:synopsis] -->
 Plugins for gateway services built with
@@ -91,7 +92,10 @@ distributions.
 ## Citation
 
 <!-- --8<-- [start:citation] -->
-If you use FOCA plugins, please cite them with the metadata in
+If you use FOCA plugins, please cite them with their DOI
+[10.5281/zenodo.23858996](https://doi.org/10.5281/zenodo.23858996), which
+always resolves to the latest version on [Zenodo](https://zenodo.org/); the
+Zenodo record lists the DOI of each version, too. The citation metadata is in
 [`CITATION.cff`](https://github.com/elixir-cloud-aai/foca-plugins/blob/dev/CITATION.cff):
 on GitHub, "Cite this repository" in the sidebar of the repository formats it
 as APA or BibTeX.
@@ -107,10 +111,12 @@ plugin][docs-writing]).
 
 [badge-build-status]: <https://github.com/elixir-cloud-aai/foca-plugins/actions/workflows/ci.yml/badge.svg?branch=dev>
 [badge-coverage]: <https://codecov.io/gh/elixir-cloud-aai/foca-plugins/branch/dev/graph/badge.svg?branch=dev>
+[badge-doi]: <https://zenodo.org/badge/DOI/10.5281/zenodo.23858996.svg>
 [badge-docs]: <https://img.shields.io/readthedocs/foca-plugins>
 [badge-license]: <https://img.shields.io/badge/license-Apache%202.0-blue.svg>
 [badge-url-build-status]: <https://github.com/elixir-cloud-aai/foca-plugins/actions/workflows/ci.yml?query=branch%3Adev>
 [badge-url-coverage]: <https://codecov.io/gh/elixir-cloud-aai/foca-plugins?branch=dev>
+[badge-url-doi]: <https://doi.org/10.5281/zenodo.23858996>
 [badge-url-docs]: <https://foca-plugins.readthedocs.io/en/latest/>
 [badge-url-license]: <https://www.apache.org/licenses/LICENSE-2.0>
 [docs]: <https://foca-plugins.readthedocs.io/en/latest/>
