@@ -36,8 +36,9 @@ repositories work the same way.
 <!-- --8<-- [end:synopsis] -->
 
 <!-- --8<-- [start:status] -->
-**Status:** the plugin API is new in FOCA 0.18.0. Plugins so far, both
-experimental and released as 0.1.0: `generic.routing.random` and
+**Status:** the plugin API is new in FOCA 0.18.0; the plugins support
+FOCA 0.18 and 0.19. Plugins so far, both experimental and released as
+0.1.x: `generic.routing.random` and
 `tes.routing.distance`, plus the example `generic.example.noop`, the
 template of new plugins (never published). The first release train is
 `foca-plugins` 0.1.0.

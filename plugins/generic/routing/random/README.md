@@ -15,7 +15,8 @@ proTES's random task distribution.
 | Phases | `route` |
 | Maturity | experimental |
 | Data transfers | none |
-| FOCA | 0.18 (`>=0.18.0,<0.19`) |
+| Data stored | none (no plugin store) |
+| FOCA | 0.18, 0.19 (`>=0.18.0,<0.20`) |
 
 ## What it does
 

@@ -12,14 +12,15 @@ request numbers (see "Releasing" in the docs).
 
 First release train: the experimental plugins `generic.routing.random` and
 `tes.routing.distance`, resolved together and each tested against FOCA
-0.18 (`foca>=0.18.0,<0.19`). Pins:
+0.18 and 0.19 (`foca>=0.18.0,<0.20`). Pins:
 
-- `foca-plugin-generic-routing-random` 0.1.0
-- `foca-plugin-tes-routing-distance` 0.1.0
+- `foca-plugin-generic-routing-random` 0.1.1
+- `foca-plugin-tes-routing-distance` 0.1.1
 
 ### Features
 
 - Add the meta distribution, with extras per group (`generic`, `tes`,
   `wes`), `all` and `experimental` (#1, #2).
 - Pin the first plugins, with the subgroup extras `generic-routing` and
-  `tes-routing` (#19, #20).
+  `tes-routing` (#19, #20), in their versions for FOCA 0.18 and 0.19
+  (#32, #36).

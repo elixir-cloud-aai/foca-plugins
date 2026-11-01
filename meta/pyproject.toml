@@ -31,7 +31,7 @@ classifiers = [
 ]
 # The FOCA versions that the train was tested with; set in the release pull
 # request
-dependencies = ["foca>=0.18.0,<0.19"]
+dependencies = ["foca>=0.18.0,<0.20"]
 
 # Extras per group (`<group>`) and subgroup (`<group>-<subgroup>`), plus
 # `all` (stable plugins only) and `experimental` (experimental ones). Each
@@ -42,15 +42,15 @@ dependencies = ["foca>=0.18.0,<0.19"]
 # the example plugin `generic.example.noop` is never published, so it is in
 # no extra
 [project.optional-dependencies]
-generic = ["foca-plugin-generic-routing-random==0.1.0"]
-generic-routing = ["foca-plugin-generic-routing-random==0.1.0"]
-tes = ["foca-plugin-tes-routing-distance==0.1.0"]
-tes-routing = ["foca-plugin-tes-routing-distance==0.1.0"]
+generic = ["foca-plugin-generic-routing-random==0.1.1"]
+generic-routing = ["foca-plugin-generic-routing-random==0.1.1"]
+tes = ["foca-plugin-tes-routing-distance==0.1.1"]
+tes-routing = ["foca-plugin-tes-routing-distance==0.1.1"]
 wes = []
 all = []
 experimental = [
-    "foca-plugin-generic-routing-random==0.1.0",
-    "foca-plugin-tes-routing-distance==0.1.0",
+    "foca-plugin-generic-routing-random==0.1.1",
+    "foca-plugin-tes-routing-distance==0.1.1",
 ]
 
 # The plugins that the extras may pin come from the workspace: uv refuses

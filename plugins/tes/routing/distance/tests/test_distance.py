@@ -159,6 +159,8 @@ def test_plugin_class_is_valid() -> None:
         "db-ip.com (api.db-ip.com)",
         "OpenStreetMap Nominatim (or the instance the admin configures)",
     ]
+    # The lookups are cached per process, not in the plugin store
+    assert Distance.data_stored == ()
 
 
 def test_plugin_meets_contract(
