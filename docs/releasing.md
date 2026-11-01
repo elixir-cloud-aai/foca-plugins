@@ -189,7 +189,10 @@ files):
 1. **Prepare release** (job `prepare`): first, before anything is installed or built,
    checks that the tag names a package and its version on that commit and
    that the package may be published (the example plugin
-   `generic.example.noop` never is); then that the commit is on `main`, the
+   `generic.example.noop` never is); then that the commit is on `main`, that CI
+   passed for it (a successful run of `ci.yml` for a push of the commit, so the
+   commit must have been on `dev`; if there is none, the job fails and says to
+   re-run the workflow once CI passed), the
    conventions hold, the changelog has the version's notes in the format
    above and, for the meta distribution, that its pinned plugin versions are
    on PyPI. It builds

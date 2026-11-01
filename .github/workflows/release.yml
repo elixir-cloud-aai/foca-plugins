@@ -3,7 +3,8 @@
 # is pushed. Fails safe: before anything is built, the tag is checked
 # against the package (`python -m scripts.release release`: a package of
 # this repository, its version on the tagged commit, not the example plugin)
-# and the commit against `main` (job `prepare`). Then it builds the
+# and the commit against `main`, and CI must have passed for the commit
+# (job `prepare`). Then it builds the
 # distributions with pinned tools (`prepare`), attests their build provenance
 # (`attest`; GitHub artifact attestations), releases them to PyPI (`pypi`)
 # with trusted publishing (no API token; each PyPI project trusts this
@@ -42,6 +43,9 @@ jobs:
     name: Prepare release
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # read the CI runs of the release commit
     outputs:
       path: ${{ steps.package.outputs.path }}
       name: ${{ steps.package.outputs.name }}
@@ -96,6 +100,21 @@ jobs:
           # The notes must exist, in the organization's format, before
           # anything is published
           python -m scripts.release notes "${TAG}" > /dev/null
+      # The checks here don't run the tests: require a successful run of the
+      # CI workflow for a push of the release commit (to `dev`); runs for pull
+      # requests test merge commits, not the commit itself. Re-runs that
+      # succeeded count
+      - name: Check that CI passed for the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          runs="$(gh api "repos/${REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&event=push&status=success&per_page=1" \
+              --jq .total_count)"
+          if [[ ! "${runs}" =~ ^[0-9]+$ || "${runs}" -lt 1 ]]; then
+              echo "::error::No successful run of the CI workflow (ci.yml) for a push of ${GITHUB_SHA}; once CI passed for it, re-run this workflow"
+              exit 1
+          fi
       # The meta distribution only after its pins: every plugin version that
       # its extras pin must be on PyPI, or its release couldn't be installed.
       # Push the plugin tags first; if this fails, re-run the failed jobs
