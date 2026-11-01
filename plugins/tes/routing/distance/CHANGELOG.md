@@ -16,7 +16,7 @@ store.
 ### Maintenance
 
 - Support FOCA 0.19 (`foca>=0.18.0,<0.20`), tested against FOCA 0.18.0,
-  0.19.0 and `dev` (#32, #PRNUM).
+  0.19.0 and `dev` (#32, #36).
 
 ## 0.1.0
 

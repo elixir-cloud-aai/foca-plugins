@@ -23,4 +23,4 @@ First release train: the experimental plugins `generic.routing.random` and
   `wes`), `all` and `experimental` (#1, #2).
 - Pin the first plugins, with the subgroup extras `generic-routing` and
   `tes-routing` (#19, #20), in their versions for FOCA 0.18 and 0.19
-  (#32, #PRNUM).
+  (#32, #36).
