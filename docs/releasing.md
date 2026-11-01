@@ -112,16 +112,21 @@ Each plugin declares the FOCA versions that it supports (`foca>=X,<Y` in
 its `pyproject.toml`), and so does the meta distribution. When FOCA
 releases a new minor version (Dependabot proposes it for `uv.lock`):
 
-1. Add it to the FOCA versions of the test matrix (`ci.yml`, job `test`)
-   as the newest release, and fix what fails.
+1. Add it to the test matrix (`ci.yml`, job `test`) as the newest
+   release: to the list `foca`, and as an `include` entry with its
+   `foca-spec` (e.g., `foca==0.20.0`), without which the job installs no
+   FOCA. Fix what fails.
 2. Raise the upper bounds of the plugins that pass, of the template
    `generic.example.noop` (new plugins start from it) and of the meta
    distribution.
-3. If plugins drop old FOCA versions, raise their lower bounds, and the
-   lowest FOCA version of the matrix with them; move `coverage: true` to
-   the new lowest entry.
+3. Old FOCA versions are dropped for all plugins at once, as the matrix
+   tests every plugin with every FOCA version: raise the lower bounds of
+   the plugins and of the meta distribution, remove the old versions from
+   the matrix and move `coverage: true` to the new lowest entry.
 4. Release the plugins whose range changed (a patch release if the range
-   only widened), then a release train that pins them.
+   only widened; dropped FOCA versions are a breaking change), then a
+   release train that pins them, versioned as in [Versions](#versions)
+   (adding FOCA versions counts as minor, dropping them as major).
 
 ## What the workflow does
 
