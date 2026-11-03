@@ -139,8 +139,9 @@ page](https://foca.readthedocs.io/en/latest/plugins/#testing-plugins).
 CI tests each plugin with the lowest and highest Python versions that FOCA
 supports and the default one (3.11, 3.13, 3.15), and with the lowest
 supported FOCA version, 0.18.0, the first release with the plugin API (the
-lower bound of every plugin, `foca>=0.18.0`), the newest FOCA release,
-0.19.0 (the upper bounds are `<0.20`), and FOCA's `dev` branch, from Git,
+lower bound of every plugin, `foca>=0.18.0`), the later FOCA releases up
+to the newest, 0.19.0 and 0.20.0 (the upper bounds are `<0.21`), and
+FOCA's `dev` branch, from Git,
 so that changes of the plugin API show before FOCA releases them. The
 development environment has the newest FOCA release (`uv.lock`).
 
