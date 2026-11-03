@@ -148,9 +148,16 @@ check it, and add it to your gateway's image or mount it, e.g., in a
 derived image (see "Installing" in the docs):
 
 ```dockerfile
+FROM ghcr.io/astral-sh/uv:<version>@sha256:<digest> AS uv
+
 FROM docker.io/elixircloud/protes:<version>@sha256:<digest>
-COPY plugins.txt /tmp/plugins.txt
-RUN pip install --no-cache-dir --no-deps --require-hashes -r /tmp/plugins.txt
+USER root
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=type=bind,source=plugins.txt,target=/tmp/plugins.txt \
+    UV_NO_CACHE=1 uv pip install --system --require-hashes --only-binary :all: \
+        --no-deps --compile-bytecode -r /tmp/plugins.txt \
+    && uv pip check --system
+USER <user of the app's image>
 # Downloaded and checked before the build, e.g.:
 #   curl -fsSLO https://download.db-ip.com/free/dbip-city-lite-2026-10.mmdb.gz
 #   gunzip dbip-city-lite-2026-10.mmdb.gz

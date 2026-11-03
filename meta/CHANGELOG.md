@@ -10,8 +10,8 @@ request numbers (see "Releasing" in the docs).
 
 ## 0.2.0
 
-Release train for FOCA 0.20: the plugins of 0.1.0, each tested against
-FOCA 0.18, 0.19 and 0.20 (`foca>=0.18.0,<0.21`). Pins:
+Release train for FOCA 0.20: the same plugins as in 0.1.0, in new versions,
+each tested against FOCA 0.18, 0.19 and 0.20 (`foca>=0.18.0,<0.21`). Pins:
 
 - `foca-plugin-generic-routing-random` 0.1.2
 - `foca-plugin-tes-routing-distance` 0.1.2

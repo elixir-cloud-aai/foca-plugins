@@ -57,7 +57,7 @@ Install plugins into the environment of the gateway app, usually in an
 image derived from the app's image, then enable them in the app's
 configuration (FOCA's `plugins` section): installed is not enabled. Either
 a group or subgroup of a release train, as an extra of the meta
-distribution `foca-plugins` (e.g., `foca-plugins[tes]==0.1.0`), or single
+distribution `foca-plugins` (e.g., `foca-plugins[tes]==0.2.0`), or single
 plugin distributions (`foca-plugin-<group>-<subgroup>-<name>`).
 <!-- --8<-- [end:install] -->
 

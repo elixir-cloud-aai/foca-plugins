@@ -33,7 +33,7 @@ FOCA versions that it declares.
 For example:
 
 ```bash
-pip install "foca-plugins[tes-routing]==0.1.0"
+pip install "foca-plugins[tes-routing]==0.2.0"
 ```
 
 The example plugin `generic.example.noop` is never published, so it is in
@@ -72,16 +72,16 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     UV_NO_CACHE=1 uv pip install --system --require-hashes --only-binary :all: \
         --no-deps --compile-bytecode -r /tmp/plugins.txt \
     && uv pip check --system
-USER 1000
+USER <user of the app's image>
 ```
 
 Images on FOCA 0.20 or later have no pip, so install with uv, as above.
-Set `USER` back to the user of the app's image.
+Set the last `USER` to the user that the app's image runs as (e.g., 1000
+for proTES).
 
 `plugins.txt` lists the plugins and their dependencies that the app's image
 doesn't have, each pinned with hashes, e.g., generated with `uv pip
-compile` or `pip-compile --generate-hashes` against the app's own
-requirements:
+compile --generate-hashes` against the app's own requirements:
 
 ```text
 foca-plugin-tes-routing-distance==<version> \
