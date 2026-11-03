@@ -8,6 +8,23 @@ release notes (Breaking changes, Features, Security, Fixes, Documentation,
 Maintenance; empty ones left out), each entry with its issue and pull
 request numbers (see "Releasing" in the docs).
 
+## 0.2.0
+
+Release train for FOCA 0.20: the same plugins as in 0.1.0, in new versions,
+each tested against FOCA 0.18, 0.19 and 0.20 (`foca>=0.18.0,<0.21`). Pins:
+
+- `foca-plugin-generic-routing-random` 0.1.2
+- `foca-plugin-tes-routing-distance` 0.1.2
+
+### Documentation
+
+- Install plugins in derived images with uv, as images on FOCA 0.20 have
+  no pip (#53, #54).
+
+### Maintenance
+
+- Support FOCA 0.20, and pin the plugins' versions for it (#53, #54).
+
 ## 0.1.0
 
 First release train: the experimental plugins `generic.routing.random` and

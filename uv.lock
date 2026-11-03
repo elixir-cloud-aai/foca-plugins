@@ -1097,7 +1097,7 @@ wheels = [
 
 [[package]]
 name = "foca"
-version = "0.19.0"
+version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "addict" },
@@ -1120,9 +1120,9 @@ dependencies = [
     { name = "urllib3" },
     { name = "werkzeug" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7f/0b/d0c7025f907e227fb501d7f247e3df89a01f52ea596079d33da8be9d5b54/foca-0.19.0.tar.gz", hash = "sha256:b3f3e87f3107231998060ed0d894af2743afa1189af158eeaacae760cc292adf", size = 496552, upload-time = "2026-10-31T16:30:25.197Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/42/548c07b887f37e11ef6ecfc4c37e8950172f841e09dc3abef44295eacc53/foca-0.20.0.tar.gz", hash = "sha256:f5b1f46c91a2e2a015d74f85db67f1979f301490d8db48470fb431ebbc64fce9", size = 516650, upload-time = "2026-11-03T21:05:52.657Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/18/b8/cd781dfc69b4769085661f843748f272e8aa6f46800f9b9699f71892409d/foca-0.19.0-py3-none-any.whl", hash = "sha256:518137e392d746e9b3432cfb558a0680ac6cbe518c6e09a3a06c9a27aa9f569e", size = 277463, upload-time = "2026-10-31T16:30:23.622Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/c4/66899bb8e7ca86953ad711845bea2c9d5b12da1eea3729dd282e0d7335ca/foca-0.20.0-py3-none-any.whl", hash = "sha256:b08c3e8303883e1b5985fb8c04571e46fde3c3d67548af0d55cb293530a07dd4", size = 282811, upload-time = "2026-11-03T21:05:50.891Z" },
 ]
 
 [[package]]
@@ -1136,13 +1136,13 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.18.0,<0.20" },
+    { name = "foca", specifier = ">=0.18.0,<0.21" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 
 [[package]]
 name = "foca-plugin-generic-routing-random"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "plugins/generic/routing/random" }
 dependencies = [
     { name = "foca" },
@@ -1151,13 +1151,13 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.18.0,<0.20" },
+    { name = "foca", specifier = ">=0.18.0,<0.21" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 
 [[package]]
 name = "foca-plugin-tes-routing-distance"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "plugins/tes/routing/distance" }
 dependencies = [
     { name = "foca" },
@@ -1167,14 +1167,14 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.18.0,<0.20" },
+    { name = "foca", specifier = ">=0.18.0,<0.21" },
     { name = "maxminddb", specifier = ">=2.6,<4" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 
 [[package]]
 name = "foca-plugins"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "meta" }
 dependencies = [
     { name = "foca" },
@@ -1200,7 +1200,7 @@ tes-routing = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.18.0,<0.20" },
+    { name = "foca", specifier = ">=0.18.0,<0.21" },
     { name = "foca-plugin-generic-routing-random", marker = "extra == 'experimental'", editable = "plugins/generic/routing/random" },
     { name = "foca-plugin-generic-routing-random", marker = "extra == 'generic'", editable = "plugins/generic/routing/random" },
     { name = "foca-plugin-generic-routing-random", marker = "extra == 'generic-routing'", editable = "plugins/generic/routing/random" },

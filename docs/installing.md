@@ -11,8 +11,8 @@ dependencies (and scanner findings) out of their images.
 !!! note "Experimental plugins only"
 
     The plugins released so far, `generic.routing.random` and
-    `tes.routing.distance` (0.1.1 each), are experimental; the first release
-    train is `foca-plugins` 0.1.0. Distributions named below that don't
+    `tes.routing.distance` (0.1.2 each), are experimental; the latest release
+    train is `foca-plugins` 0.2.0. Distributions named below that don't
     exist yet are examples of the naming scheme.
 
 ## Release trains: the meta distribution
@@ -33,7 +33,7 @@ FOCA versions that it declares.
 For example:
 
 ```bash
-pip install "foca-plugins[tes-routing]==0.1.0"
+pip install "foca-plugins[tes-routing]==0.2.0"
 ```
 
 The example plugin `generic.example.noop` is never published, so it is in
@@ -46,7 +46,7 @@ of this repository with those of others, e.g. (the second name is an
 example):
 
 ```bash
-pip install "foca-plugin-tes-routing-distance==0.1.1" "org-example-cost-routing==<version>"
+pip install "foca-plugin-tes-routing-distance==0.1.2" "org-example-cost-routing==<version>"
 ```
 
 Each plugin declares the FOCA versions that it supports (`foca>=X,<Y`) and
@@ -61,16 +61,27 @@ of any repository. proTES documents its image and configuration in its
 repository; the same recipe applies to every gateway app:
 
 ```dockerfile
+# uv, by digest; not copied into the image
+FROM ghcr.io/astral-sh/uv:<version>@sha256:<digest> AS uv
+
 # The app's release image, by digest
 FROM docker.io/elixircloud/protes:<version>@sha256:<digest>
-COPY plugins.txt /tmp/plugins.txt
-RUN pip install --no-cache-dir --no-deps --require-hashes -r /tmp/plugins.txt
+USER root
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=type=bind,source=plugins.txt,target=/tmp/plugins.txt \
+    UV_NO_CACHE=1 uv pip install --system --require-hashes --only-binary :all: \
+        --no-deps --compile-bytecode -r /tmp/plugins.txt \
+    && uv pip check --system
+USER <user of the app's image>
 ```
+
+Images on FOCA 0.20 or later have no pip, so install with uv, as above.
+Set the last `USER` to the user that the app's image runs as (e.g., 1000
+for proTES).
 
 `plugins.txt` lists the plugins and their dependencies that the app's image
 doesn't have, each pinned with hashes, e.g., generated with `uv pip
-compile` or `pip-compile --generate-hashes` against the app's own
-requirements:
+compile --generate-hashes` against the app's own requirements:
 
 ```text
 foca-plugin-tes-routing-distance==<version> \
