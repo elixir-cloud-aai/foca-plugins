@@ -31,7 +31,7 @@ classifiers = [
 ]
 # The FOCA versions that the train was tested with; set in the release pull
 # request
-dependencies = ["foca>=0.18.0,<0.21"]
+dependencies = ["foca>=0.18.0,<0.22"]
 
 # Extras per group (`<group>`) and subgroup (`<group>-<subgroup>`), plus
 # `all` (stable plugins only) and `experimental` (experimental ones). Each

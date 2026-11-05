@@ -8,6 +8,13 @@ release notes (Breaking changes, Features, Security, Fixes, Documentation,
 Maintenance; empty ones left out), each entry with its issue and pull
 request numbers (see "Releasing" in the docs).
 
+## Unreleased
+
+### Maintenance
+
+- Support FOCA 0.21 in the meta distribution (`foca>=0.18.0,<0.22`), tested against FOCA 0.21.0
+  (#55, #56).
+
 ## 0.2.0
 
 Release train for FOCA 0.20: the same plugins as in 0.1.0, in new versions,

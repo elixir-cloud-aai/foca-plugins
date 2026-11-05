@@ -37,9 +37,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    # The plugin API of FOCA 0.18 to 0.20 (`foca.plugins`, API version 1);
+    # The plugin API of FOCA 0.18 to 0.21 (`foca.plugins`, API version 1);
     # raise the upper bound once CI has tested the next minor version
-    "foca>=0.18.0,<0.21",
+    "foca>=0.18.0,<0.22",
     "pydantic>=2.7,<3",
 ]
 
