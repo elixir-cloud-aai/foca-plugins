@@ -17,7 +17,7 @@ and is **not published**.
 | Maturity | experimental |
 | Data transfers | none |
 | Data stored | none (no plugin store) |
-| FOCA | 0.18, 0.19, 0.20 (`>=0.18.0,<0.21`) |
+| FOCA | 0.18, 0.19, 0.20, 0.21 (`>=0.18.0,<0.22`) |
 
 ## What it does
 
