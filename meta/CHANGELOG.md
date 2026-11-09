@@ -8,14 +8,22 @@ release notes (Breaking changes, Features, Security, Fixes, Documentation,
 Maintenance; empty ones left out), each entry with its issue and pull
 request numbers (see "Releasing" in the docs).
 
-## Unreleased
+## 0.3.0
+
+Release train for FOCA 0.22: the same plugins as in 0.2.0, in new versions,
+each tested against FOCA 0.18, 0.19, 0.20, 0.21 and 0.22
+(`foca>=0.18.0,<0.23`). Pins:
+
+- `foca-plugin-generic-routing-random` 0.1.3
+- `foca-plugin-tes-routing-distance` 0.1.3
 
 ### Maintenance
 
-- Support FOCA 0.22 in the meta distribution (`foca>=0.18.0,<0.23`), tested against FOCA 0.22.0
-  (#61, #62).
-- Support FOCA 0.21 in the meta distribution (`foca>=0.18.0,<0.22`), tested against FOCA 0.21.0
-  (#55, #56).
+- Support FOCA 0.22 in the meta distribution (`foca>=0.18.0,<0.23`), tested
+  against FOCA 0.22.0 (#61, #62).
+- Support FOCA 0.21 in the meta distribution (`foca>=0.18.0,<0.22`), tested
+  against FOCA 0.21.0 (#55, #56).
+- Pin the plugins' versions for FOCA 0.21 and 0.22 (#63, #64).
 
 ## 0.2.0
 

@@ -44,7 +44,7 @@ FOCA 0.18 to 0.22. Plugins so far, both experimental and released as
 0.1.x: `generic.routing.random` and
 `tes.routing.distance`, plus the example `generic.example.noop`, the
 template of new plugins (never published). The latest release train is
-`foca-plugins` 0.2.0.
+`foca-plugins` 0.3.0.
 <!-- --8<-- [end:status] -->
 
 **Read the [documentation][docs]** for installing plugins, writing them,
@@ -57,7 +57,7 @@ Install plugins into the environment of the gateway app, usually in an
 image derived from the app's image, then enable them in the app's
 configuration (FOCA's `plugins` section): installed is not enabled. Either
 a group or subgroup of a release train, as an extra of the meta
-distribution `foca-plugins` (e.g., `foca-plugins[tes]==0.2.0`), or single
+distribution `foca-plugins` (e.g., `foca-plugins[tes]==0.3.0`), or single
 plugin distributions (`foca-plugin-<group>-<subgroup>-<name>`).
 <!-- --8<-- [end:install] -->
 

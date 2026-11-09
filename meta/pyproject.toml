@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 name = "foca-plugins"
 # Semantic version of the release train, derived from the changes of its
 # pins (see "Releasing" in the docs); set in the release pull request
-version = "0.2.0"
+version = "0.3.0"
 description = "Selections of the FOCA gateway plugins of ELIXIR On-Cloud"
 readme = "README.md"
 # FOCA's `requires-python`, as in the plugins
@@ -42,15 +42,15 @@ dependencies = ["foca>=0.18.0,<0.23"]
 # the example plugin `generic.example.noop` is never published, so it is in
 # no extra
 [project.optional-dependencies]
-generic = ["foca-plugin-generic-routing-random==0.1.2"]
-generic-routing = ["foca-plugin-generic-routing-random==0.1.2"]
-tes = ["foca-plugin-tes-routing-distance==0.1.2"]
-tes-routing = ["foca-plugin-tes-routing-distance==0.1.2"]
+generic = ["foca-plugin-generic-routing-random==0.1.3"]
+generic-routing = ["foca-plugin-generic-routing-random==0.1.3"]
+tes = ["foca-plugin-tes-routing-distance==0.1.3"]
+tes-routing = ["foca-plugin-tes-routing-distance==0.1.3"]
 wes = []
 all = []
 experimental = [
-    "foca-plugin-generic-routing-random==0.1.2",
-    "foca-plugin-tes-routing-distance==0.1.2",
+    "foca-plugin-generic-routing-random==0.1.3",
+    "foca-plugin-tes-routing-distance==0.1.3",
 ]
 
 # The plugins that the extras may pin come from the workspace: uv refuses

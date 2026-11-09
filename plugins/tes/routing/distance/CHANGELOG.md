@@ -7,7 +7,10 @@ Features, Security, Fixes, Documentation, Maintenance; empty ones left
 out), each entry with its issue and pull request numbers (see "Releasing"
 in the docs).
 
-## Unreleased
+## 0.1.3
+
+Support for FOCA 0.21 and 0.22: the plugin now installs alongside FOCA
+0.18 to 0.22.
 
 ### Maintenance
 

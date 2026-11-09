@@ -11,8 +11,8 @@ dependencies (and scanner findings) out of their images.
 !!! note "Experimental plugins only"
 
     The plugins released so far, `generic.routing.random` and
-    `tes.routing.distance` (0.1.2 each), are experimental; the latest release
-    train is `foca-plugins` 0.2.0. Distributions named below that don't
+    `tes.routing.distance` (0.1.3 each), are experimental; the latest release
+    train is `foca-plugins` 0.3.0. Distributions named below that don't
     exist yet are examples of the naming scheme.
 
 ## Release trains: the meta distribution
@@ -33,7 +33,7 @@ FOCA versions that it declares.
 For example:
 
 ```bash
-pip install "foca-plugins[tes-routing]==0.2.0"
+pip install "foca-plugins[tes-routing]==0.3.0"
 ```
 
 The example plugin `generic.example.noop` is never published, so it is in
@@ -46,7 +46,7 @@ of this repository with those of others, e.g. (the second name is an
 example):
 
 ```bash
-pip install "foca-plugin-tes-routing-distance==0.1.2" "org-example-cost-routing==<version>"
+pip install "foca-plugin-tes-routing-distance==0.1.3" "org-example-cost-routing==<version>"
 ```
 
 Each plugin declares the FOCA versions that it supports (`foca>=X,<Y`) and
