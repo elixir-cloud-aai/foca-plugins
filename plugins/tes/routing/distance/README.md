@@ -19,7 +19,7 @@ successor of proTES's distance-based task distribution.
 | Maturity | experimental |
 | Data transfers | none by default; with `provider: dbip`, db-ip.com and Nominatim (see [Data transfers](#data-transfers)) |
 | Data stored | none (no plugin store) |
-| FOCA | 0.18, 0.19, 0.20, 0.21 (`>=0.18.0,<0.22`) |
+| FOCA | 0.18, 0.19, 0.20, 0.21, 0.22 (`>=0.18.0,<0.23`) |
 
 ## What it does
 

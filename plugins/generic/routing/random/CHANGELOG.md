@@ -11,6 +11,8 @@ in the docs).
 
 ### Maintenance
 
+- Support FOCA 0.22 (`foca>=0.18.0,<0.23`), tested against FOCA 0.22.0
+  (#61, #62).
 - Support FOCA 0.21 (`foca>=0.18.0,<0.22`), tested against FOCA 0.21.0
   (#55, #56).
 
