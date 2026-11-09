@@ -1142,7 +1142,7 @@ requires-dist = [
 
 [[package]]
 name = "foca-plugin-generic-routing-random"
-version = "0.1.2"
+version = "0.1.3"
 source = { editable = "plugins/generic/routing/random" }
 dependencies = [
     { name = "foca" },
@@ -1157,7 +1157,7 @@ requires-dist = [
 
 [[package]]
 name = "foca-plugin-tes-routing-distance"
-version = "0.1.2"
+version = "0.1.3"
 source = { editable = "plugins/tes/routing/distance" }
 dependencies = [
     { name = "foca" },
@@ -1174,7 +1174,7 @@ requires-dist = [
 
 [[package]]
 name = "foca-plugins"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "meta" }
 dependencies = [
     { name = "foca" },

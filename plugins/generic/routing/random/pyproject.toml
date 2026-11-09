@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 name = "foca-plugin-generic-routing-random"
 # SemVer, bumped in the release pull request (tag
 # `foca-plugin-generic-routing-random-v<version>`; see "Releasing" in the docs)
-version = "0.1.2"
+version = "0.1.3"
 description = "FOCA gateway plugin that routes requests to the backends in random order"
 readme = "README.md"
 # FOCA's `requires-python` (plugins run in the environments of FOCA apps)
