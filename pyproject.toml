@@ -22,8 +22,8 @@ build-constraint-dependencies = ["setuptools==84.2.1"]
 [dependency-groups]
 # Local hooks of `.pre-commit-config.yaml` and CI use these too
 dev = [
-    "ast-grep-cli>=0.51",
-    "coverage>=7.16",
+    "ast-grep-cli>=0.51.1",
+    "coverage>=7.17.2",
     # Writes the GeoIP database fixtures of `tes.routing.distance`'s tests
     "mmdb-writer>=0.2.7",
     # Networks of those fixtures (also a dependency of mmdb-writer)
@@ -32,7 +32,7 @@ dev = [
     "pip-audit>=2.10",
     "pre-commit>=4.6",
     "pytest>=9.2.0",
-    "ruff>=0.17.3",
+    "ruff>=0.17.4",
 ]
 # Documentation (`mkdocs.yml`), built by Read the Docs (`.readthedocs.yaml`)
 # and in CI. The packages that add warnings, which fail the strict build,
