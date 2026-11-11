@@ -61,11 +61,14 @@ def load_keys(paths: Sequence[Path]) -> list[bytes]:
     for path in paths:
         try:
             keys.append(get_private_key(str(path), callback=lambda: ""))
-        # `crypt4gh` exits on keys with a passphrase
+        # `crypt4gh` 1.8 exits on keys that it can't unlock, 1.7 raises an
+        # error without message; other errors say what is wrong (e.g., a
+        # missing file, no key)
         except (Exception, SystemExit) as error:
+            reason = "" if isinstance(error, SystemExit) else str(error)
             raise DecryptionError(
-                f"Can't read secret key {path} (no Crypt4GH or OpenSSH secret key"
-                " without passphrase)"
+                f"Can't read secret key {path}:"
+                f" {reason or 'it has a passphrase or is invalid'}"
             ) from error
     return keys
 
@@ -73,27 +76,36 @@ def load_keys(paths: Sequence[Path]) -> list[bytes]:
 def decrypt_file(source: Path, target: Path, keys: Sequence[bytes]) -> None:
     """Decrypt a Crypt4GH file.
 
+    The decrypted data goes to a temporary file next to the target first,
+    which is removed whatever ends the decryption, unless it became the
+    target.
+
     Args:
         source: Crypt4GH file.
         target: Path of the decrypted file; its directory must exist.
         keys: Secret keys.
 
     Raises:
-        DecryptionError: The file can't be read or decrypted with the keys.
+        DecryptionError: The file can't be read or decrypted with the keys,
+            or the target can't be written.
     """
     key_tuples = [(CHACHA20_POLY1305, key, None) for key in keys]
-    with tempfile.NamedTemporaryFile(
-        dir=target.parent, prefix=f".{target.name}.", delete=False
-    ) as part:
-        try:
+    part: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            dir=target.parent, prefix=f".{target.name}.", delete=False
+        ) as outfile:
+            part = Path(outfile.name)
             with source.open("rb") as infile:
-                decrypt(keys=key_tuples, infile=infile, outfile=part)
-        except Exception as error:
-            part.close()
-            Path(part.name).unlink()
-            raise DecryptionError(f"Can't decrypt {source}: {error}") from error
-    Path(part.name).chmod(FILE_MODE)
-    Path(part.name).replace(target)
+                decrypt(keys=key_tuples, infile=infile, outfile=outfile)
+        part.chmod(FILE_MODE)
+        part.replace(target)
+        part = None
+    except Exception as error:
+        raise DecryptionError(f"Can't decrypt {source}: {error}") from error
+    finally:
+        if part is not None:
+            part.unlink(missing_ok=True)
 
 
 def open_directories(targets: Sequence[Path]) -> None:
@@ -101,9 +113,15 @@ def open_directories(targets: Sequence[Path]) -> None:
 
     Args:
         targets: Paths of the decrypted files.
+
+    Raises:
+        DecryptionError: A directory can't be created.
     """
     for directory in {target.parent for target in targets}:
-        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise DecryptionError(f"Can't create {directory}: {error}") from error
         try:
             directory.chmod(DIRECTORY_MODE)
         except OSError as error:  # e.g., not its owner: keep its permissions

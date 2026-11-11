@@ -243,15 +243,23 @@ def test_fails_on_other_files(tmp_path: Path, alice: KeyPair) -> None:
     assert list(out.iterdir()) == []
 
 
-@pytest.mark.parametrize("kind", ["missing", "public", "passphrase"])
+@pytest.mark.parametrize(
+    ("kind", "reason"),
+    [
+        ("missing", "No such file"),
+        ("public", "Invalid key format"),
+        ("passphrase", "it has a passphrase or is invalid"),
+    ],
+)
 def test_fails_on_unusable_keys(
     tmp_path: Path,
     alice: KeyPair,
     encrypt_file: Encrypt,
     caplog: pytest.LogCaptureFixture,
     kind: str,
+    reason: str,
 ) -> None:
-    """Keys that can't be read fail before anything is written.
+    """Keys that can't be read fail before anything is written, with a reason.
 
     Args:
         tmp_path: Temporary directory of the test.
@@ -259,6 +267,7 @@ def test_fails_on_unusable_keys(
         encrypt_file: Writes Crypt4GH files.
         caplog: Captured logs.
         kind: Kind of unusable key.
+        reason: Part of the message.
     """
     keys = {
         "missing": tmp_path / "missing.sec",
@@ -273,6 +282,73 @@ def test_fails_on_unusable_keys(
     assert status == 1
     assert not out.exists()
     assert "Can't read secret key" in caplog.text
+    assert reason in caplog.text
+
+
+def test_fails_on_unwritable_targets(
+    tmp_path: Path,
+    alice: KeyPair,
+    encrypt_file: Encrypt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A target that can't be written fails; no decrypted data is left.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        alice: Key pair of Alice.
+        encrypt_file: Writes Crypt4GH files.
+        monkeypatch: Patches `Path.replace`.
+    """
+    one = encrypt_file(tmp_path / "one.c4gh", b"one", alice)
+    two = encrypt_file(tmp_path / "two.c4gh", b"two", alice)
+    out = tmp_path / "out"
+    replace = Path.replace
+
+    def refuse_two(path: Path, target: Path) -> Path:
+        """Refuse to write the target `two`.
+
+        Args:
+            path: Path of the temporary file.
+            target: Target.
+
+        Returns:
+            The target.
+
+        Raises:
+            PermissionError: The target is `two`.
+        """
+        if Path(target).name == "two":
+            raise PermissionError(os.strerror(13))
+        return replace(path, target)
+
+    monkeypatch.setattr(Path, "replace", refuse_two)
+    status = decrypt.main(
+        [
+            *("--key", str(alice.secret)),
+            *("--file", str(one), str(out / "one")),
+            *("--file", str(two), str(out / "two")),
+        ]
+    )
+    assert status == 1
+    assert list(out.iterdir()) == []
+
+
+def test_fails_on_directories_that_cant_be_created(
+    tmp_path: Path, alice: KeyPair, encrypt_file: Encrypt
+) -> None:
+    """A target below a file fails before anything is decrypted.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        alice: Key pair of Alice.
+        encrypt_file: Writes Crypt4GH files.
+    """
+    source = encrypt_file(tmp_path / "data.c4gh", b"data", alice)
+    (tmp_path / "file").write_text("")
+    status = decrypt.main(
+        ["--key", str(alice.secret), "--file", str(source), str(tmp_path / "file/x")]
+    )
+    assert status == 1
 
 
 def test_fails_on_duplicate_targets(tmp_path: Path, alice: KeyPair) -> None:

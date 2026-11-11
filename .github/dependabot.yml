@@ -39,6 +39,10 @@ updates:
     schedule:
       interval: monthly
     target-branch: dev
+    # `crypt4gh` itself is updated by hand, together with the version that
+    # the tests use (see `requirements.in`); its dependencies by Dependabot
+    ignore:
+      - dependency-name: crypt4gh
     groups:
       crypt4gh-image:
         patterns: ["*"]

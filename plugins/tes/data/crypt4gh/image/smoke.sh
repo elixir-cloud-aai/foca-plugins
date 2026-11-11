@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Smoke test of the decryption image (`Dockerfile`), as CI runs it (job
-# `smoke`): makes a key pair and a Crypt4GH file with the image's `crypt4gh`
-# tools, then runs the decryption as the plugin's executor does, with the
-# inputs mounted read-only and a read-only root file system, and checks the
-# decrypted file. Needs Docker; the image must be built.
+# `smoke`): makes two key pairs and a Crypt4GH file for each with the
+# image's `crypt4gh` tools, then runs the decryption with the arguments that
+# the plugin's executor gets (several `--key` and `--file` options), with
+# the inputs mounted read-only and a read-only root file system, and checks
+# the decrypted files and their modes; and that a failure removes the files
+# decrypted before it. Needs Docker; the image must be built.
 #
 # Usage: image/smoke.sh IMAGE
 
@@ -23,34 +25,44 @@ mkdir "${work}/in" "${work}/vol"
 chmod 0777 "${work}/in" "${work}/vol"
 
 docker run --rm -v "${work}/in:/in" "${image}" sh -euc '
-  crypt4gh-keygen --sk /in/alice.sec --pk /in/alice.pub --nocrypt -f
-  printf "hello\n" > /in/hello.txt
-  crypt4gh encrypt --recipient_pk /in/alice.pub < /in/hello.txt > /in/hello.txt.c4gh
-  rm /in/hello.txt
+  for name in alice bob; do
+    crypt4gh-keygen --sk "/in/${name}.sec" --pk "/in/${name}.pub" --nocrypt -f
+    printf "hello %s\n" "${name}" > "/in/${name}.txt"
+    crypt4gh encrypt --recipient_pk "/in/${name}.pub" \
+      < "/in/${name}.txt" > "/in/${name}.txt.c4gh"
+    rm "/in/${name}.txt"
+  done
 '
 
-docker run --rm --read-only --network none \
-  -v "${work}/in:/in:ro" -v "${work}/vol:/vol" "${image}" \
-  crypt4gh-decrypt --key /in/alice.sec \
-  --file /in/hello.txt.c4gh /vol/crypt4gh/hello.txt
+decrypt() {
+  docker run --rm --read-only --network none \
+    -v "${work}/in:/in:ro" -v "${work}/vol:/vol" "${image}" \
+    crypt4gh-decrypt "$@"
+}
 
-if [[ "$(cat "${work}/vol/crypt4gh/hello.txt")" != "hello" ]]; then
-  echo "Decrypted file differs" >&2
+fail() {
+  echo "$1" >&2
   exit 1
-fi
+}
 
-# A file that no key decrypts fails, without leaving a decrypted file
-docker run --rm -v "${work}/in:/in" "${image}" \
-  crypt4gh-keygen --sk /in/bob.sec --pk /in/bob.pub --nocrypt -f
-if docker run --rm --read-only --network none \
-  -v "${work}/in:/in:ro" -v "${work}/vol:/vol" "${image}" \
-  crypt4gh-decrypt --key /in/bob.sec \
-  --file /in/hello.txt.c4gh /vol/crypt4gh/other.txt; then
-  echo "Decryption with the wrong key succeeded" >&2
-  exit 1
+decrypt --key /in/alice.sec --key /in/bob.sec \
+  --file /in/alice.txt.c4gh /vol/crypt4gh/alice.txt \
+  --file /in/bob.txt.c4gh /vol/crypt4gh/bob.txt
+for name in alice bob; do
+  [[ "$(cat "${work}/vol/crypt4gh/${name}.txt")" == "hello ${name}" ]] ||
+    fail "Decrypted file of ${name} differs"
+  [[ "$(stat -c %a "${work}/vol/crypt4gh/${name}.txt")" == 644 ]] ||
+    fail "Decrypted file of ${name} is not readable by all"
+done
+[[ "$(stat -c %a "${work}/vol/crypt4gh")" == 755 ]] ||
+  fail "Directory of the decrypted files is not readable by all"
+
+# The second file is for a key that isn't given: the decryption fails, and
+# the first file, decrypted before, is removed
+if decrypt --key /in/alice.sec \
+  --file /in/alice.txt.c4gh /vol/other/alice.txt \
+  --file /in/bob.txt.c4gh /vol/other/bob.txt; then
+  fail "Decryption without the key succeeded"
 fi
-if [[ -e "${work}/vol/crypt4gh/other.txt" ]]; then
-  echo "Failed decryption left a file" >&2
-  exit 1
-fi
+[[ -z "$(ls -A "${work}/vol/other")" ]] || fail "Failed decryption left files"
 echo "Smoke test passed"

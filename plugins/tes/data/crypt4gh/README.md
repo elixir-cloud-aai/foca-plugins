@@ -168,8 +168,8 @@ FOCA's plugin engine:
   keys named as keys (`.sec`) are passed to the executor; other inputs stay
   where they are, instead of being moved to the volume.
 - Decrypted files lose their suffix (`reads.fq.c4gh` decrypts to
-  `reads.fq`), are readable by all, and are written next to the inputs,
-  which may be read-only.
+  `reads.fq`), are readable by all (0644), and are written to the volume;
+  inputs are only read, so they may be mounted read-only.
 - A failed decryption fails the task (exit status 1), instead of passing
   the encrypted file on.
 - The volume is a setting (`/vol/crypt4gh`), not a random path per process,

@@ -59,10 +59,13 @@ def test_decrypted_name(
         ("/vol/crypt4gh/a", True),
         ("/vol/crypt4gh2", False),
         ("/vol", False),
+        ("/vol/x/../crypt4gh/a", True),
+        ("//vol/crypt4gh/a", True),
+        ("/vol/crypt4gh/../x", True),
     ],
 )
 def test_within(path: str, expected: bool) -> None:
-    """Paths are compared by their parts.
+    """Paths are compared by their parts, as given and normalized.
 
     Args:
         path: Path.
@@ -97,6 +100,8 @@ def test_classify_without_crypt4gh_files() -> None:
         (["in/a.c4gh", "/k/a.sec"], r"^inputs\[0\]: path must be absolute$"),
         (["/in/a.c4gh", "k/a.sec"], r"^inputs\[1\]: path must be absolute$"),
         (["/k/a.sec", "/in/.c4gh"], r"^inputs\[1\]: Crypt4GH file needs a name"),
+        (["/k/a.sec", "/in/...c4gh"], r"^inputs\[1\]: Crypt4GH file needs a name"),
+        (["/k/a.sec", "/in/..c4gh"], r"^inputs\[1\]: Crypt4GH file needs a name"),
         (
             ["/in/a.c4gh", "/k/a.sec", "/other/a.c4gh"],
             r"^inputs\[0\] and inputs\[2\]: Crypt4GH files decrypt to the same",

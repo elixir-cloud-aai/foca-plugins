@@ -317,6 +317,13 @@ jobs:
         working-directory: plugins/tes/data/crypt4gh
       - name: Run smoke test
         run: plugins/tes/data/crypt4gh/image/smoke.sh "${IMAGE}"
+      # Known vulnerabilities of the image's Python packages, as pinned (the
+      # version of pip-audit is that of `uv.lock`; update it by hand)
+      - name: Audit dependencies
+        run: |
+          pipx run --spec pip-audit==2.10.1 pip-audit \
+            --requirement plugins/tes/data/crypt4gh/image/requirements.txt \
+            --require-hashes --disable-pip --progress-spinner off
   # The only required check: passes if every other job passed, or was skipped
   # where that is intended: `test` if no plugin is affected (the matrix would
   # be empty), `title` on pushes and for Dependabot. Any other result

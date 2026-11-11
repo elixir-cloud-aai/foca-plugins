@@ -11,6 +11,7 @@ when the task runs.
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+import posixpath
 
 
 class InputError(ValueError):
@@ -77,10 +78,15 @@ def within(path: str, directory: str) -> bool:
         directory: Absolute, normalized path of the directory.
 
     Returns:
-        Whether `path` is `directory` or below it (`..` is not resolved, as
-        in the container, where `path` may be a symbolic link).
+        Whether `path` is `directory` or below it, also after normalizing it
+        (e.g., `/vol/x/../crypt4gh` or `//vol/crypt4gh` for `/vol/crypt4gh`),
+        or as it is (as `..` after a symbolic link leads elsewhere).
     """
-    return PurePosixPath(path).is_relative_to(PurePosixPath(directory))
+    normalized = "/" + posixpath.normpath(path).lstrip("/")
+    return any(
+        PurePosixPath(candidate).is_relative_to(PurePosixPath(directory))
+        for candidate in (path, normalized)
+    )
 
 
 def classify(
@@ -106,7 +112,8 @@ def classify(
 
     Raises:
         InputError: A Crypt4GH file or key has no absolute path, a Crypt4GH
-            file has no name without its suffix, two Crypt4GH files decrypt
+            file has no name without its suffix (or `.` or `..`), two
+            Crypt4GH files decrypt
             to the same name, or there are Crypt4GH files but no keys.
     """
     encrypted = tuple(encrypted_suffixes)
@@ -126,7 +133,7 @@ def classify(
         if is_key:
             keys.append(path)
             continue
-        if not name:
+        if name is None or name in ("", ".", ".."):
             raise InputError(
                 f"{field}[{index}]: Crypt4GH file needs a name besides its suffix"
             )

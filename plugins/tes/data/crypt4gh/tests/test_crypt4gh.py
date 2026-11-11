@@ -331,6 +331,50 @@ def test_on_request_refuses_other_payloads(plugin: Crypt4gh) -> None:
         plugin.on_request(make_inbound([]), make_context())
 
 
+@pytest.mark.parametrize(
+    "task",
+    [
+        {"inputs": "x", "executors": "y", "outputs": 1, "volumes": {}},
+        {"inputs": ["x", None], "executors": [1]},
+    ],
+)
+def test_on_request_takes_malformed_fields_as_absent(
+    plugin: Crypt4gh, task: dict[str, Any]
+) -> None:
+    """Fields of the wrong type don't apply; the app validates them later.
+
+    Args:
+        plugin: Plugin.
+        task: Task without Crypt4GH inputs, with fields of the wrong type.
+    """
+    request = make_inbound(task)
+    plugin.on_request(request, make_context())
+    assert request.payload == task
+
+
+def test_on_request_keeps_malformed_items(plugin: Crypt4gh) -> None:
+    """Items of the wrong type are kept as they are, around the rewrite.
+
+    Args:
+        plugin: Plugin.
+    """
+    task = make_task(
+        outputs=["o"],
+        volumes="v",
+        executors=["e", {"image": "a", "command": [1, "/in/reads.fq.c4gh"]}],
+    )
+    task["inputs"].append("i")
+    request = make_inbound(task)
+    plugin.on_request(request, make_context())
+    payload = request.payload
+    assert payload["executors"][1:] == [
+        "e",
+        {"image": "a", "command": [1, "/vol/crypt4gh/reads.fq"]},
+    ]
+    assert payload["volumes"] == [VOLUME]
+    assert payload["outputs"] == ["o"]
+
+
 def test_plugin_meets_contract() -> None:
     """The plugin passes FOCA's contract checks (class, metadata, hooks)."""
     check_plugin_contract(
