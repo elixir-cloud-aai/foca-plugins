@@ -32,6 +32,7 @@ from foca_plugins.tes.data.crypt4gh.task import (
     check_outputs,
     check_paths,
     input_paths,
+    malformed,
     rewrite,
 )
 
@@ -165,7 +166,8 @@ class Crypt4gh(Plugin[Crypt4ghConfig, EmptyModel]):
             )
             ctx.record("encrypted_inputs", len(found.files))
             ctx.record("key_inputs", len(found.keys))
-            if not found.files:
+            # Fields of the wrong type are left for the app to reject
+            if not found.files or malformed(task, "executors", "volumes"):
                 return
             check_paths(task, settings.volume)
             check_outputs(task, found)

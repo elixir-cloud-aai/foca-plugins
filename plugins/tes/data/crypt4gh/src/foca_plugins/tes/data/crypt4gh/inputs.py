@@ -111,10 +111,10 @@ def classify(
         Crypt4GH file or a key.
 
     Raises:
-        InputError: A Crypt4GH file or key has no absolute path, a Crypt4GH
-            file has no name without its suffix (or `.` or `..`), two
-            Crypt4GH files decrypt
-            to the same name, or there are Crypt4GH files but no keys.
+        InputError: A Crypt4GH file or key has no absolute, normalized
+            path, a Crypt4GH file has no name without its suffix (or `.` or
+            `..`), two Crypt4GH files decrypt to the same name, or there are
+            Crypt4GH files but no keys.
     """
     encrypted = tuple(encrypted_suffixes)
     keys_suffixes = tuple(key_suffixes)
@@ -128,8 +128,10 @@ def classify(
         is_key = name is None and decrypted_name(path, keys_suffixes) is not None
         if name is None and not is_key:
             continue
-        if not PurePosixPath(path).is_absolute():
-            raise InputError(f"{field}[{index}]: path must be absolute")
+        # Normalized, so that the paths of executors and outputs that name
+        # the input are recognized by plain comparison
+        if "/" + posixpath.normpath(path).lstrip("/") != path:
+            raise InputError(f"{field}[{index}]: path must be absolute and normalized")
         if is_key:
             keys.append(path)
             continue

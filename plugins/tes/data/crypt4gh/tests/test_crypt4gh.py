@@ -360,7 +360,7 @@ def test_on_request_keeps_malformed_items(plugin: Crypt4gh) -> None:
     """
     task = make_task(
         outputs=["o"],
-        volumes="v",
+        volumes=None,
         executors=["e", {"image": "a", "command": [1, "/in/reads.fq.c4gh"]}],
     )
     task["inputs"].append("i")
@@ -373,6 +373,21 @@ def test_on_request_keeps_malformed_items(plugin: Crypt4gh) -> None:
     ]
     assert payload["volumes"] == [VOLUME]
     assert payload["outputs"] == ["o"]
+
+
+@pytest.mark.parametrize("fields", [{"executors": "e"}, {"volumes": "v"}])
+def test_on_request_keeps_tasks_with_malformed_lists(
+    plugin: Crypt4gh, fields: dict[str, Any]
+) -> None:
+    """Tasks whose executors or volumes are no lists are left for the app.
+
+    Args:
+        plugin: Plugin.
+        fields: Field of the wrong type.
+    """
+    request = make_inbound(make_task(**fields))
+    plugin.on_request(request, make_context())
+    assert request.payload == make_task(**fields)
 
 
 def test_plugin_meets_contract() -> None:

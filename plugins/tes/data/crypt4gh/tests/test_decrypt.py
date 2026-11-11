@@ -333,6 +333,55 @@ def test_fails_on_unwritable_targets(
     assert list(out.iterdir()) == []
 
 
+def test_fails_on_files_that_cant_be_removed(
+    tmp_path: Path,
+    alice: KeyPair,
+    bob: KeyPair,
+    encrypt_file: Encrypt,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Targets that can't be removed after a failure are logged; status 1.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        alice: Key pair of Alice.
+        bob: Key pair of Bob.
+        encrypt_file: Writes Crypt4GH files.
+        monkeypatch: Patches `Path.unlink`.
+        caplog: Captured logs.
+    """
+    one = encrypt_file(tmp_path / "one.c4gh", b"one", alice)
+    two = encrypt_file(tmp_path / "two.c4gh", b"two", bob)
+    out = tmp_path / "out"
+    unlink = Path.unlink
+
+    def refuse_one(path: Path, missing_ok: bool = False) -> None:
+        """Refuse to remove the target `one`.
+
+        Args:
+            path: Path.
+            missing_ok: Whether a missing file is fine.
+
+        Raises:
+            PermissionError: The path is the target `one`.
+        """
+        if path.name == "one":
+            raise PermissionError(os.strerror(13))
+        unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse_one)
+    status = decrypt.main(
+        [
+            *("--key", str(alice.secret)),
+            *("--file", str(one), str(out / "one")),
+            *("--file", str(two), str(out / "two")),
+        ]
+    )
+    assert status == 1
+    assert f"Can't remove {out / 'one'}" in caplog.text
+
+
 def test_fails_on_directories_that_cant_be_created(
     tmp_path: Path, alice: KeyPair, encrypt_file: Encrypt
 ) -> None:

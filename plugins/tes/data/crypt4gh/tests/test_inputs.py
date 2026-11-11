@@ -97,8 +97,10 @@ def test_classify_without_crypt4gh_files() -> None:
 @pytest.mark.parametrize(
     ("paths", "message"),
     [
-        (["in/a.c4gh", "/k/a.sec"], r"^inputs\[0\]: path must be absolute$"),
-        (["/in/a.c4gh", "k/a.sec"], r"^inputs\[1\]: path must be absolute$"),
+        (["in/a.c4gh", "/k/a.sec"], r"^inputs\[0\]: path must be absolute"),
+        (["/in/a.c4gh", "k/a.sec"], r"^inputs\[1\]: path must be absolute"),
+        (["/in/./a.c4gh", "/k/a.sec"], r"^inputs\[0\]: path must be absolute"),
+        (["/in/a.c4gh", "//k/a.sec"], r"^inputs\[1\]: path must be absolute"),
         (["/k/a.sec", "/in/.c4gh"], r"^inputs\[1\]: Crypt4GH file needs a name"),
         (["/k/a.sec", "/in/...c4gh"], r"^inputs\[1\]: Crypt4GH file needs a name"),
         (["/k/a.sec", "/in/..c4gh"], r"^inputs\[1\]: Crypt4GH file needs a name"),

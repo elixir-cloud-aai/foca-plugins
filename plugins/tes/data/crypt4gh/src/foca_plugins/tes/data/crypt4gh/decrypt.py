@@ -77,7 +77,7 @@ def decrypt_file(source: Path, target: Path, keys: Sequence[bytes]) -> None:
     """Decrypt a Crypt4GH file.
 
     The decrypted data goes to a temporary file next to the target first,
-    which is removed whatever ends the decryption, unless it became the
+    which is removed on any error or exception, unless it became the
     target.
 
     Args:
@@ -129,13 +129,16 @@ def open_directories(targets: Sequence[Path]) -> None:
 
 
 def remove(paths: Sequence[Path]) -> None:
-    """Remove files that exist.
+    """Remove files that exist, as far as possible.
 
     Args:
         paths: Paths of the files.
     """
     for path in paths:
-        path.unlink(missing_ok=True)
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as error:  # go on with the others
+            logger.warning("Can't remove %s: %s", path, error)
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:

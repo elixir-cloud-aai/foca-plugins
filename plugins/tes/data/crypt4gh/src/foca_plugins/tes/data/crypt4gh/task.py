@@ -6,15 +6,32 @@ the arguments of the task's own executors that name a Crypt4GH input are
 changed to its decrypted file. Which inputs are Crypt4GH files and keys is
 decided by the gateway-neutral :py:mod:`.inputs`.
 
-Fields of the wrong type (e.g., `inputs` that is no list, or items that are
-no objects) are taken as absent: the gateway app validates the task after
-the plugin and rejects it.
+Fields and items of the wrong type (e.g., `inputs` that is no list, or
+items that are no objects) are skipped and kept as they are, and a task
+whose `executors` or `volumes` is no list is not changed: the gateway app
+validates the task after the plugin and rejects it.
 """
 
 from collections.abc import Sequence
 from typing import Any
 
 from foca_plugins.tes.data.crypt4gh.inputs import Crypt4ghInputs, InputError, within
+
+
+def malformed(task: dict[str, Any], *fields: str) -> bool:
+    """Tell whether a task has list fields of another type.
+
+    Args:
+        task: TES task.
+        fields: Names of the list fields.
+
+    Returns:
+        Whether one of the fields is present, not null and no list.
+    """
+    return any(
+        task.get(field) is not None and not isinstance(task[field], list)
+        for field in fields
+    )
 
 
 def items(task: dict[str, Any], field: str) -> list[Any]:
