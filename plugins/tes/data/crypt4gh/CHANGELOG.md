@@ -14,4 +14,4 @@ entry with its issue and pull request numbers (see "Releasing" in the docs).
   middleware: decrypts the Crypt4GH inputs of TES tasks in an executor of
   its own, with the secret keys among the task's inputs, to a volume of its
   own; with the decryption image (`image/Dockerfile`), built and smoke
-  tested in CI, not yet published (#65).
+  tested in CI, not yet published (#65, #66).
