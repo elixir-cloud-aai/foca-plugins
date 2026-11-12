@@ -29,10 +29,15 @@ RUN apt-get update --error-on=any && \
     rm -rf /var/lib/apt/lists/*
 
 # `crypt4gh` and its dependencies, as compiled in `requirements.txt` with
-# their hashes, from wheels only
+# their hashes, from wheels only; then pip is removed, which the executor
+# doesn't need, so that the vulnerabilities of pip and of the packages that
+# it vendors (e.g., `urllib3`), which the base image's pip has until upstream
+# rebuilds it, aren't in the image (the scans in CI and in the release
+# workflow fail on fixable ones)
 RUN --mount=type=bind,source=image/requirements.txt,target=/tmp/requirements.txt \
     pip install --no-cache-dir --require-hashes --only-binary :all: \
-        -r /tmp/requirements.txt
+        -r /tmp/requirements.txt && \
+    pip uninstall --yes pip
 
 COPY --chmod=0755 src/foca_plugins/tes/data/crypt4gh/decrypt.py /usr/local/bin/crypt4gh-decrypt
 
