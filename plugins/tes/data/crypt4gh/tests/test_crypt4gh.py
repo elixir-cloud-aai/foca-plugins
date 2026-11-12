@@ -503,15 +503,87 @@ def test_on_request_rewrites_tasks_with_other_decryption(plugin: Crypt4gh) -> No
         plugin.on_request(make_inbound(twice), make_context())
 
 
-@pytest.mark.parametrize("path", ["", "vol", "./vol"])
-def test_on_request_leaves_relative_paths_to_app(plugin: Crypt4gh, path: str) -> None:
-    """Relative output paths aren't taken for parents of the volume.
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"outputs": [{"url": "s3://b/o", "path": ""}]},
+        {"outputs": [{"url": "s3://b/o", "path": "vol/crypt4gh/reads.fq"}]},
+        {"inputs": [*make_task()["inputs"], {"url": "s3://b/i", "path": "in/x"}]},
+        {"volumes": ["vol/crypt4gh"]},
+    ],
+)
+def test_on_request_rejects_relative_paths(
+    plugin: Crypt4gh, fields: dict[str, Any]
+) -> None:
+    """Relative paths of inputs, outputs and volumes are rejected.
 
     Args:
         plugin: Plugin.
-        path: Relative output path.
+        fields: Fields of the task.
     """
-    request = make_inbound(make_task(outputs=[{"url": "s3://b/o", "path": path}]))
+    with pytest.raises(Rejected, match=r"\]: path must be absolute$"):
+        plugin.on_request(make_inbound(make_task(**fields)), make_context())
+
+
+@pytest.mark.parametrize(
+    ("path", "message"),
+    [
+        ("/v*/crypt4gh/*", "reserved for decrypted files"),
+        ("/*", "reserved for decrypted files"),
+        ("/vol/crypt4gh/*.fq", "reserved for decrypted files"),
+        ("/in/*.c4gh", "that of a Crypt4GH input"),
+        ("/in/reads.fq.c4g[h]", "that of a Crypt4GH input"),
+    ],
+)
+def test_on_request_rejects_wildcard_outputs(
+    plugin: Crypt4gh, path: str, message: str
+) -> None:
+    """Outputs with wildcards that may match the volume or an input are rejected.
+
+    Args:
+        plugin: Plugin.
+        path: Output path with wildcards.
+        message: Part of the expected message.
+    """
+    task = make_task(outputs=[{"url": "s3://b/o", "path": path}])
+    with pytest.raises(Rejected, match=rf"^outputs\[0\]: path is {message}"):
+        plugin.on_request(make_inbound(task), make_context())
+
+
+def test_on_request_rejects_outputs_of_inputs_with_brackets(plugin: Crypt4gh) -> None:
+    """An output at the path of an input whose name has `[` is rejected.
+
+    Args:
+        plugin: Plugin.
+    """
+    path = "/in/a[1].c4gh"
+    task = make_task(outputs=[{"url": "s3://b/o", "path": path}])
+    task["inputs"][0]["path"] = path
+    with pytest.raises(Rejected, match=r"^outputs\[0\]: path is that of a Crypt4GH"):
+        plugin.on_request(make_inbound(task), make_context())
+
+
+def test_on_request_keeps_wildcard_outputs_elsewhere(plugin: Crypt4gh) -> None:
+    """Outputs with wildcards outside the volume and inputs are kept.
+
+    Args:
+        plugin: Plugin.
+    """
+    outputs = [{"url": "s3://b/o", "path": "/out/*.bam"}]
+    request = make_inbound(make_task(outputs=outputs))
+    plugin.on_request(request, make_context())
+    assert request.payload["outputs"] == outputs
+
+
+def test_on_request_takes_null_type_for_file(plugin: Crypt4gh) -> None:
+    """Inputs with a null type are files.
+
+    Args:
+        plugin: Plugin.
+    """
+    task = make_task()
+    task["inputs"][0]["type"] = None
+    request = make_inbound(task)
     plugin.on_request(request, make_context())
     assert request.payload["volumes"] == [VOLUME]
 

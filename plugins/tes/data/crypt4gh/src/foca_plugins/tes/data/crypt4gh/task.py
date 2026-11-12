@@ -10,10 +10,12 @@ Fields and items of the wrong type (e.g., `inputs` that is no list, or
 items that are no objects) are skipped and kept as they are, and a task
 whose `executors` is absent, null, empty or no list, or whose `volumes` is
 no list, is not changed: the gateway app validates the task after the plugin
-and rejects it. Relative paths are left to the app likewise.
+and rejects it. Relative paths of inputs, outputs and volumes are rejected
+by the plugin, as it can't tell where they lead.
 """
 
 from collections.abc import Sequence
+import fnmatch
 from typing import Any, TypeGuard
 
 from foca_plugins.tes.data.crypt4gh.inputs import (
@@ -87,7 +89,8 @@ def input_paths(task: dict[str, Any]) -> list[str | None]:
     paths: list[str | None] = []
     for item in items(task, "inputs"):
         path = item.get("path") if isinstance(item, dict) else None
-        is_file = isinstance(item, dict) and item.get("type", "FILE") == "FILE"
+        # A null type is that of a file, as for the backends
+        is_file = isinstance(item, dict) and (item.get("type") or "FILE") == "FILE"
         paths.append(path if is_file and isinstance(path, str) else None)
     return paths
 
@@ -104,6 +107,26 @@ def absolute(value: Any) -> TypeGuard[str]:
     return isinstance(value, str) and value.startswith("/")
 
 
+WILDCARDS = frozenset("*?[")
+"""Characters of the POSIX wildcards that TES allows in output paths."""
+
+
+def fixed_directory(path: str) -> str:
+    """Get the directory that an output path with wildcards is restricted to.
+
+    Args:
+        path: Absolute output path.
+
+    Returns:
+        The path itself if it has no wildcards, else the directory of its
+        part before the first wildcard (e.g., `/` for `/v*/crypt4gh/*`).
+    """
+    index = next((i for i, char in enumerate(path) if char in WILDCARDS), None)
+    if index is None:
+        return path
+    return path[:index].rsplit("/", 1)[0] or "/"
+
+
 def check_paths(task: dict[str, Any], volume: str, own: int | None = None) -> None:
     """Check that the task leaves the volume of the decrypted files alone.
 
@@ -114,20 +137,29 @@ def check_paths(task: dict[str, Any], volume: str, own: int | None = None) -> No
             added it (cf. :py:func:`rewritten`), which is then not checked.
 
     Raises:
-        InputError: An input, output or volume of the task is the volume,
-            inside it or one of its parent directories (cf.
-            :py:func:`.inputs.overlaps`).
+        InputError: An input, output or volume of the task has a relative
+            path, or is the volume, inside it or one of its parent
+            directories (cf. :py:func:`.inputs.overlaps`); for outputs with
+            wildcards, the directory before the first wildcard counts.
     """
-    for field in ("inputs", "outputs"):
-        for index, item in objects(task, field):
-            path = item.get("path")
-            if absolute(path) and overlaps(path, volume):
-                raise InputError(
-                    f"{field}[{index}]: path is reserved for decrypted files"
-                )
-    for index, path in enumerate(items(task, "volumes")):
-        if index != own and absolute(path) and overlaps(path, volume):
-            raise InputError(f"volumes[{index}]: path is reserved for decrypted files")
+    paths = [
+        (f"{field}[{index}]", item.get("path"))
+        for field in ("inputs", "outputs")
+        for index, item in objects(task, field)
+    ]
+    paths += [
+        (f"volumes[{index}]", path)
+        for index, path in enumerate(items(task, "volumes"))
+        if index != own
+    ]
+    for name, path in paths:
+        if not isinstance(path, str):
+            continue
+        if not absolute(path):
+            raise InputError(f"{name}: path must be absolute")
+        checked = fixed_directory(path) if name.startswith("outputs") else path
+        if overlaps(checked, volume):
+            raise InputError(f"{name}: path is reserved for decrypted files")
 
 
 def alias(value: Any, targets: dict[str, str]) -> Any:
@@ -158,12 +190,17 @@ def check_outputs(task: dict[str, Any], found: Crypt4ghInputs) -> None:
 
     Raises:
         InputError: An output has the path of a Crypt4GH input, also in
-            another spelling (e.g., `/in/./a.c4gh` for `/in/a.c4gh`).
+            another spelling (e.g., `/in/./a.c4gh` for `/in/a.c4gh`), or
+            has wildcards that match one (e.g., `/in/*.c4gh`).
     """
     encrypted = {file.path for file in found.files}
     for index, item in objects(task, "outputs"):
         path = item.get("path")
-        if absolute(path) and normalize(path) in encrypted:
+        # Compared as is, too, for names with `[` (e.g., `/in/a[1].c4gh`)
+        if absolute(path) and (
+            normalize(path) in encrypted
+            or any(fnmatch.fnmatchcase(file, normalize(path)) for file in encrypted)
+        ):
             raise InputError(
                 f"outputs[{index}]: path is that of a Crypt4GH input, which is"
                 " not changed"

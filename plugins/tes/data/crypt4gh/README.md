@@ -27,7 +27,8 @@ Crypt4GH middleware of proTES.
 `request`:
 
 1. Finds the Crypt4GH files and the secret keys among the task's `inputs`
-   (files only, not `type: DIRECTORY`), by the suffixes of their `path`s:
+   (files only, not `type: DIRECTORY`; a null `type` is a file), by the
+   suffixes of their `path`s:
    `encrypted_suffixes` (`.c4gh`) and `key_suffixes` (`.sec`). The gateway
    can't read the inputs, so their names decide; the decryption executor
    checks the files when the task runs.
@@ -43,13 +44,17 @@ Crypt4GH middleware of proTES.
 3. Otherwise, it rejects the task with `422 Unprocessable Content` if:
    - it has no secret key among its inputs;
    - a Crypt4GH input or key has no absolute, normalized path (e.g.,
-     `/in/./reads.fq.c4gh` or `//in/reads.fq.c4gh`);
+     `/in/./reads.fq.c4gh` or `//in/reads.fq.c4gh`), or another input, an
+     output or a volume has a relative path;
    - a Crypt4GH input has no name besides its suffix (e.g., `/in/.c4gh`),
      or two decrypt to the same name (e.g., `/a/x.c4gh` and `/b/x.c4gh`);
    - an input, output or volume of the task is the `volume` of the
      decrypted files, inside it or one of its parent directories (e.g.,
      `/vol` or `/`), also in another spelling (e.g., `/vol/x/../crypt4gh`);
-   - an output has the path of a Crypt4GH input, also in another spelling.
+     for an output with wildcards, the directory before its first wildcard
+     counts (e.g., `/` for `/v*/crypt4gh/*`);
+   - an output has the path of a Crypt4GH input, also in another spelling,
+     or has wildcards that match one (e.g., `/in/*.c4gh`).
 4. Adds `volume` (`/vol/crypt4gh`) to the task's `volumes`, and, as the
    task's first executor, the decryption executor (`image`, `command`), which
    decrypts each Crypt4GH input to `<volume>/<name without suffix>`, e.g.,
