@@ -31,10 +31,15 @@ Crypt4GH middleware of proTES.
    `encrypted_suffixes` (`.c4gh`) and `key_suffixes` (`.sec`). The gateway
    can't read the inputs, so their names decide; the decryption executor
    checks the files when the task runs.
-2. Leaves tasks without Crypt4GH inputs as they are, and tasks that it
-   changed already (they have `volume` and, as their first executor, the
-   decryption executor), so that a task sent through the gateway twice gets
-   one decryption executor.
+2. Leaves tasks without Crypt4GH inputs as they are, as well as tasks
+   without executors and tasks whose `executors` or `volumes` have the
+   wrong type, which the gateway app rejects. Tasks that it changed already
+   (they have `volume` once and, as their first executor, exactly the
+   decryption executor that it would add) are checked as in step 3, except
+   for that volume, but not changed again, so that a task sent through the
+   gateway twice gets one decryption executor. This holds for gateways with
+   the same `image`, `command` and `volume` only: chain gateways with this
+   plugin only if their settings are the same.
 3. Otherwise, it rejects the task with `422 Unprocessable Content` if:
    - it has no secret key among its inputs;
    - a Crypt4GH input or key has no absolute, normalized path (e.g.,

@@ -177,22 +177,27 @@ class Crypt4gh(Plugin[Crypt4ghConfig, EmptyModel]):
             ctx.record("encrypted_inputs", len(found.files))
             ctx.record("key_inputs", len(found.keys))
             # Fields of the wrong type are left for the app to reject
-            if not found.files or malformed(
-                task, "executors", "volumes", nullable=("volumes",)
+            if (
+                not found.files
+                or malformed(task, "executors", "volumes", nullable=("volumes",))
+                or not task.get("executors")
             ):
                 return
             # A task changed already (e.g., sent through the gateway twice)
-            if rewritten(
+            # is checked, except for the volume that the plugin added
+            own = rewritten(
                 task,
+                found,
                 image=settings.image,
                 command=settings.command,
                 volume=settings.volume,
-            ):
-                return
-            check_paths(task, settings.volume)
+            )
+            check_paths(task, settings.volume, own)
             check_outputs(task, found)
         except InputError as error:
             raise Rejected(str(error), 422) from error
+        if own is not None:
+            return
         rewrite(
             task,
             found,

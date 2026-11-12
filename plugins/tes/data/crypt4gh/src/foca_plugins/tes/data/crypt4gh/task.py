@@ -8,12 +8,13 @@ decided by the gateway-neutral :py:mod:`.inputs`.
 
 Fields and items of the wrong type (e.g., `inputs` that is no list, or
 items that are no objects) are skipped and kept as they are, and a task
-whose `executors` is null or no list, or whose `volumes` is no list, is not
-changed: the gateway app validates the task after the plugin and rejects it.
+whose `executors` is absent, null, empty or no list, or whose `volumes` is
+no list, is not changed: the gateway app validates the task after the plugin
+and rejects it. Relative paths are left to the app likewise.
 """
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, TypeGuard
 
 from foca_plugins.tes.data.crypt4gh.inputs import (
     Crypt4ghInputs,
@@ -91,12 +92,26 @@ def input_paths(task: dict[str, Any]) -> list[str | None]:
     return paths
 
 
-def check_paths(task: dict[str, Any], volume: str) -> None:
+def absolute(value: Any) -> TypeGuard[str]:
+    """Tell whether a value is an absolute path.
+
+    Args:
+        value: Path, argument or other value of a task.
+
+    Returns:
+        Whether `value` is a string that starts with `/`.
+    """
+    return isinstance(value, str) and value.startswith("/")
+
+
+def check_paths(task: dict[str, Any], volume: str, own: int | None = None) -> None:
     """Check that the task leaves the volume of the decrypted files alone.
 
     Args:
         task: TES task.
         volume: Path of the volume of the decrypted files.
+        own: Position of the volume among the task's `volumes` if the plugin
+            added it (cf. :py:func:`rewritten`), which is then not checked.
 
     Raises:
         InputError: An input, output or volume of the task is the volume,
@@ -106,12 +121,12 @@ def check_paths(task: dict[str, Any], volume: str) -> None:
     for field in ("inputs", "outputs"):
         for index, item in objects(task, field):
             path = item.get("path")
-            if isinstance(path, str) and overlaps(path, volume):
+            if absolute(path) and overlaps(path, volume):
                 raise InputError(
                     f"{field}[{index}]: path is reserved for decrypted files"
                 )
     for index, path in enumerate(items(task, "volumes")):
-        if isinstance(path, str) and overlaps(path, volume):
+        if index != own and absolute(path) and overlaps(path, volume):
             raise InputError(f"volumes[{index}]: path is reserved for decrypted files")
 
 
@@ -126,7 +141,7 @@ def alias(value: Any, targets: dict[str, str]) -> Any:
         The path of the decrypted file if `value` is the absolute path of a
         Crypt4GH input, in any spelling (e.g., `//in/a.c4gh`); else `value`.
     """
-    if isinstance(value, str) and value.startswith("/"):
+    if absolute(value):
         return targets.get(normalize(value), value)
     return value
 
@@ -148,11 +163,7 @@ def check_outputs(task: dict[str, Any], found: Crypt4ghInputs) -> None:
     encrypted = {file.path for file in found.files}
     for index, item in objects(task, "outputs"):
         path = item.get("path")
-        if (
-            isinstance(path, str)
-            and path.startswith("/")
-            and normalize(path) in encrypted
-        ):
+        if absolute(path) and normalize(path) in encrypted:
             raise InputError(
                 f"outputs[{index}]: path is that of a Crypt4GH input, which is"
                 " not changed"
@@ -196,31 +207,33 @@ def decryption_executor(
 
 
 def rewritten(
-    task: dict[str, Any], *, image: str, command: Sequence[str], volume: str
-) -> bool:
+    task: dict[str, Any],
+    found: Crypt4ghInputs,
+    *,
+    image: str,
+    command: Sequence[str],
+    volume: str,
+) -> int | None:
     """Tell whether the plugin has added the decryption to a task already.
 
     Args:
         task: TES task.
+        found: Crypt4GH files and keys among the task's inputs.
         image: Image of the decryption executor.
         command: Command of the decryption script in the image.
         volume: Path of the volume of the decrypted files.
 
     Returns:
-        Whether the task has the volume and its first executor runs the
-        decryption command in the decryption image.
+        The position of the volume among the task's `volumes` if the volume
+        is there once and the first executor is the decryption executor
+        that the plugin would add; else `None`.
     """
     executors = items(task, "executors")
-    if not executors or not isinstance(executors[0], dict):
-        return False
-    first = executors[0]
-    args = first.get("command")
-    return (
-        volume in items(task, "volumes")
-        and first.get("image") == image
-        and isinstance(args, list)
-        and args[: len(command)] == list(command)
-    )
+    volumes = items(task, "volumes")
+    expected = decryption_executor(found, image=image, command=command, volume=volume)
+    if executors[:1] != [expected] or volumes.count(volume) != 1:
+        return None
+    return volumes.index(volume)
 
 
 def rewrite(

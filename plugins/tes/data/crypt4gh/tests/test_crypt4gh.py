@@ -386,12 +386,18 @@ def test_on_request_keeps_malformed_items(plugin: Crypt4gh) -> None:
 
 @pytest.mark.parametrize(
     "fields",
-    [{"executors": "e"}, {"executors": None}, {"volumes": "v"}, {"volumes": {}}],
+    [
+        {"executors": "e"},
+        {"executors": None},
+        {"executors": []},
+        {"volumes": "v"},
+        {"volumes": {}},
+    ],
 )
 def test_on_request_keeps_tasks_with_malformed_lists(
     plugin: Crypt4gh, fields: dict[str, Any]
 ) -> None:
-    """Tasks whose executors or volumes are no lists are left for the app.
+    """Tasks with empty executors, or lists of another type, are left alone.
 
     Args:
         plugin: Plugin.
@@ -424,6 +430,90 @@ def test_on_request_changes_aliases_of_inputs(plugin: Crypt4gh) -> None:
     assert first["command"] == ["cat", *(["/vol/crypt4gh/reads.fq"] * 2)]
     assert first["stdin"] == "/vol/crypt4gh/reads.fq"
     assert second["command"] == ["ls", "in/reads.fq.c4gh"]
+
+
+def test_on_request_keeps_tasks_without_executors(plugin: Crypt4gh) -> None:
+    """Tasks without executors are left for the app.
+
+    Args:
+        plugin: Plugin.
+    """
+    task = make_task()
+    del task["executors"]
+    request = make_inbound(task)
+    plugin.on_request(request, make_context())
+    assert "executors" not in request.payload
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        (
+            {"outputs": [{"url": "s3://b/o", "path": "/in/reads.fq.c4gh"}]},
+            r"^outputs\[1\]: path is that of a Crypt4GH input",
+        ),
+        (
+            {"outputs": [{"url": "s3://b/o", "path": "/"}]},
+            r"^outputs\[1\]: path is reserved for decrypted files$",
+        ),
+        (
+            {"volumes": ["/vol"]},
+            r"^volumes\[1\]: path is reserved for decrypted files$",
+        ),
+    ],
+)
+def test_on_request_checks_rewritten_tasks(
+    plugin: Crypt4gh, fields: dict[str, Any], message: str
+) -> None:
+    """A task changed already is still checked.
+
+    Args:
+        plugin: Plugin.
+        fields: Fields added to the changed task.
+        message: Pattern of the expected message.
+    """
+    request = make_inbound(make_task())
+    plugin.on_request(request, make_context())
+    task = request.payload
+    for field, value in fields.items():
+        task[field] = [*task.get(field, []), *value]
+    with pytest.raises(Rejected, match=message) as raised:
+        plugin.on_request(make_inbound(task), make_context())
+    assert raised.value.status == 422
+
+
+def test_on_request_rewrites_tasks_with_other_decryption(plugin: Crypt4gh) -> None:
+    """Tasks that resemble a changed one only in part are checked in full.
+
+    A first executor with the decryption image and command but other
+    arguments, or a second copy of the volume, isn't the plugin's change.
+
+    Args:
+        plugin: Plugin.
+    """
+    fake = {"image": IMAGE, "command": ["crypt4gh-decrypt"]}
+    task = make_task(volumes=[VOLUME], executors=[fake])
+    with pytest.raises(Rejected, match=r"^volumes\[0\]: path is reserved"):
+        plugin.on_request(make_inbound(task), make_context())
+    request = make_inbound(make_task())
+    plugin.on_request(request, make_context())
+    twice = request.payload
+    twice["volumes"] = [VOLUME, VOLUME]
+    with pytest.raises(Rejected, match=r"^volumes\[0\]: path is reserved"):
+        plugin.on_request(make_inbound(twice), make_context())
+
+
+@pytest.mark.parametrize("path", ["", "vol", "./vol"])
+def test_on_request_leaves_relative_paths_to_app(plugin: Crypt4gh, path: str) -> None:
+    """Relative output paths aren't taken for parents of the volume.
+
+    Args:
+        plugin: Plugin.
+        path: Relative output path.
+    """
+    request = make_inbound(make_task(outputs=[{"url": "s3://b/o", "path": path}]))
+    plugin.on_request(request, make_context())
+    assert request.payload["volumes"] == [VOLUME]
 
 
 def test_on_request_is_idempotent(plugin: Crypt4gh) -> None:
