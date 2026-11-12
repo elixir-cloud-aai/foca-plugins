@@ -19,4 +19,4 @@ entry with its issue and pull request numbers (see "Releasing" in the docs).
   `elixircloud/foca-plugin-tes-data-crypt4gh-decrypt:<version>`: scanned
   and smoke tested, then signed (Sigstore), attested and tagged by the
   release workflow; the image no longer contains pip, which the executor
-  doesn't need (#69, #PR).
+  doesn't need (#69, #74).
