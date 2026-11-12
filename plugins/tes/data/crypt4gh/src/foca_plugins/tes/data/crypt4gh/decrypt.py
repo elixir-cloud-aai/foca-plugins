@@ -37,7 +37,6 @@ from collections.abc import Sequence
 import logging
 import os
 from pathlib import Path
-import shutil
 import sys
 import tempfile
 
@@ -175,19 +174,39 @@ def clear(directory: Path) -> bool:
         return False
     done = True
     for entry in entries:
-        try:
-            # Links are removed, never followed
-            if entry.is_dir() and not entry.is_symlink():
-                shutil.rmtree(entry)
-            else:
-                entry.unlink()
-        except FileNotFoundError:
-            continue
-        except OSError as error:  # go on with the others
-            logger.warning("Can't remove %s: %s", entry, error)
+        if remove_tree(entry):
+            logger.info("Removed %s", entry)
+        else:  # go on with the others
             done = False
-            continue
-        logger.info("Removed %s", entry)
+    return done
+
+
+def remove_tree(path: Path) -> bool:
+    """Remove a file, a link or a directory with its contents, as far as possible.
+
+    Links are removed, never followed. In a directory, an entry that can't
+    be removed doesn't stop the removal of the others.
+
+    Args:
+        path: Path of the file, link or directory.
+
+    Returns:
+        Whether it is gone; a missing path counts as gone.
+    """
+    done = True
+    try:
+        if path.is_dir() and not path.is_symlink():
+            for child in sorted(path.iterdir()):
+                done = remove_tree(child) and done
+            if done:
+                path.rmdir()
+        else:
+            path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        logger.warning("Can't remove %s: %s", path, error)
+        return False
     return done
 
 

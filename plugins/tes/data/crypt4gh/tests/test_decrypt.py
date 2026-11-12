@@ -611,6 +611,51 @@ def test_fails_on_entries_that_cant_be_removed(
     assert f"Can't remove {volume / 'one'}" in caplog.text
 
 
+def test_goes_on_in_directories_after_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An entry of a subdirectory that can't be removed doesn't stop the rest.
+
+    Its siblings and the other entries of the volume are removed; the
+    subdirectory stays with that entry; status 1.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        monkeypatch: Patches `Path.unlink`.
+        caplog: Captured logs.
+    """
+    volume = tmp_path / "vol"
+    (volume / "sub" / "deeper").mkdir(parents=True)
+    for name in ("a", "bad", "z", "deeper/x"):
+        (volume / "sub" / name).write_bytes(b"data")
+    (volume / "other").write_bytes(b"data")
+    unlink = Path.unlink
+
+    def refuse_bad(path: Path, missing_ok: bool = False) -> None:
+        """Refuse to remove the entry `bad`.
+
+        Args:
+            path: Path.
+            missing_ok: Whether a missing file is fine.
+
+        Raises:
+            PermissionError: The path is the entry `bad`.
+        """
+        if path.name == "bad":
+            raise PermissionError(os.strerror(13))
+        unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse_bad)
+    assert decrypt.main(["--clear", str(volume)]) == 1
+    assert [str(path.relative_to(volume)) for path in volume.rglob("*")] == [
+        "sub",
+        "sub/bad",
+    ]
+    assert f"Can't remove {volume / 'sub' / 'bad'}" in caplog.text
+
+
 def test_skips_entries_removed_meanwhile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -274,12 +274,13 @@ def test_on_request_can_leave_out_teardown() -> None:
     plugin = Crypt4gh(PLUGIN_ID, Crypt4ghConfig(image=IMAGE, teardown=False))
     request = make_inbound(make_task())
     plugin.on_request(request, make_context())
-    executors = request.payload["executors"]
-    assert len(executors) == 2
-    assert executors[0] == decryption_executor(
-        ("/in/reads.fq.c4gh", "/vol/crypt4gh/reads.fq")
-    )
-    assert "ignore_error" not in executors[1]
+    assert request.payload["executors"] == [
+        decryption_executor(("/in/reads.fq.c4gh", "/vol/crypt4gh/reads.fq")),
+        {
+            "image": "aligner",
+            "command": ["align", "/in/ref.fa", "/vol/crypt4gh/reads.fq", "/out"],
+        },
+    ]
 
 
 def test_on_request_runs_teardown_after_errors() -> None:
