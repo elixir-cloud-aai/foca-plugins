@@ -59,6 +59,14 @@ def test_images() -> None:
     for name, image in release.IMAGES.items():
         assert (root / names[name] / "image" / "Dockerfile").is_file()
         assert re.fullmatch(r"[a-z0-9]+(?:[._-][a-z0-9]+)*", image)
+    # Every package with a Dockerfile has an image name, so that its release
+    # doesn't fail only once its tag is pushed
+    dockerfiles = {
+        name
+        for name, path in names.items()
+        if (root / path / "image" / "Dockerfile").is_file()
+    }
+    assert dockerfiles == set(release.IMAGES)
     assert release.IMAGES == {
         "foca-plugin-tes-data-crypt4gh": "foca-plugin-tes-data-crypt4gh-decrypt"
     }

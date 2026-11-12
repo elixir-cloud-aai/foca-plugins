@@ -181,8 +181,8 @@ of its executor (`plugins/tes/data/crypt4gh/image/Dockerfile`), published
 as `docker.io/elixircloud/foca-plugin-tes-data-crypt4gh-decrypt`. A
 package's image is released with the package, from its tag, and tagged
 with the package's version only, exactly as on PyPI (e.g., `1.2.0` or
-`1.2.0rc1`; there is no `latest`, as the plugin's settings name the image of the installed
-version, best by digest). The image is built from
+`1.2.0rc1`; there is no `latest`, as the plugin's settings name the image
+of the installed version, best by digest). The image is built from
 `<package>/image/Dockerfile` with the package's directory as the build
 context; `<package>/image/smoke.sh IMAGE`, if it exists, is its smoke test.
 CI builds, smoke tests and scans it for every pull request and push
@@ -194,9 +194,8 @@ finding for one image doesn't block the other packages.
 To add an image to a package, add the name of its Docker Hub repository to
 `IMAGES` in `scripts/release.py` (the job `prepare` fails for a package
 with a Dockerfile but no image name, and the other way round), and its
-build, smoke test and scan to CI. Accepted
-vulnerabilities of all images are listed in `.trivyignore.yaml`, each with
-a reason and an expiry date.
+build, smoke test and scan to CI. Accepted vulnerabilities of all images
+are listed in `.trivyignore.yaml`, each with a reason and an expiry date.
 
 Forks publish to the Docker Hub organization of their repository variable
 `DOCKERHUB_ORG` (by default `elixircloud`): set it, and the environment's
