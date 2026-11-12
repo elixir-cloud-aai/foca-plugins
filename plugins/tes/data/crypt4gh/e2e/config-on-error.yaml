@@ -1,0 +1,11 @@
+# Second config overlay of proTES for the end-to-end test, after
+# `config.yaml`: the teardown executor runs also after one of the task's own
+# executors fails (`teardown_on_error`), which Funnel supports (TESK refuses
+# such tasks)
+plugins:
+  available:
+    tes.data.crypt4gh:
+      distribution: foca-plugin-tes-data-crypt4gh
+      config:
+        image: foca-plugin-tes-data-crypt4gh-decrypt:e2e
+        teardown_on_error: true

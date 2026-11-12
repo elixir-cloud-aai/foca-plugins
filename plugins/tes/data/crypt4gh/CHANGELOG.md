@@ -26,3 +26,10 @@ entry with its issue and pull request numbers (see "Releasing" in the docs).
   and smoke tested, then signed (Sigstore), attested and tagged by the
   release workflow; the image no longer contains pip, which the executor
   doesn't need (#69, #74).
+
+### Maintenance
+
+- Add an end-to-end test (`e2e/check.sh`, CI job `e2e`): proTES with the
+  plugin sends tasks with Crypt4GH inputs, served over HTTP, to Funnel, a
+  real TES backend; it checks the decrypted content, the teardown, a
+  failing decryption and `teardown_on_error` (#68).

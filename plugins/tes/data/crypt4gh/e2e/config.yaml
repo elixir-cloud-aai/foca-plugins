@@ -1,0 +1,47 @@
+# Config overlay of proTES for the end-to-end test (`compose.yaml`): the
+# identity provider of `services.py`, Funnel as the only TES backend, and a
+# pipeline with the plugin (with the decryption image that `check.sh`
+# builds) before FOCA's ordered routing
+security:
+  auth:
+    issuers:
+      - http://services:8080/oidc/
+    audience:
+      - e2e-client
+  access_control:
+    claim_groups: groups
+    group_mapping:
+      e2e-users: user
+    require_admin: False
+custom:
+  tes:
+    backends:
+      # Funnel reports an empty `type.version`, so it needs the label
+      - type: ga4gh-tes
+        url: http://funnel:8000
+        url_schemes:
+          - http
+        auth: none
+        labels:
+          tes.version: "1.1"
+    url_schemes:
+      - http
+  controllers:
+    post_task:
+      polling:
+        wait: 1
+plugins:
+  available:
+    tes.data.crypt4gh:
+      distribution: foca-plugin-tes-data-crypt4gh
+      config:
+        # Built locally by `check.sh`; Funnel's pull of it fails, and Funnel
+        # runs the local image
+        image: foca-plugin-tes-data-crypt4gh-decrypt:e2e
+  pipeline:
+    - id: decrypt
+      alternatives:
+        - plugin: tes.data.crypt4gh
+    - id: route
+      alternatives:
+        - plugin: foca.routing.ordered

@@ -1,0 +1,146 @@
+# Compose stack of the end-to-end test of `tes.data.crypt4gh` (`check.sh`,
+# which sets the variables): proTES with the plugin (`Dockerfile.protes`),
+# its Celery worker, MongoDB and RabbitMQ, Funnel as the TES backend
+# (`Dockerfile.funnel`, `funnel.yaml`), and the identity provider and file
+# server of `services.py`. Funnel runs the executors of tasks as sibling
+# containers through the Docker socket of the host, so its work directory
+# (`E2E_WORK_DIR`/funnel) has the same path in Funnel and on the host. Only
+# proTES is published, on the host's loopback interface (`E2E_PORT`).
+# MongoDB and RabbitMQ as in the integration test of proTES. The services
+# talk on an internal network (`stack`), which the host can't reach, so
+# that Funnel's API, which has no authentication, is reachable from the
+# stack only; images are pulled by the Docker daemon, not through it. The
+# project name is set per run by `check.sh` (`COMPOSE_PROJECT_NAME`)
+
+x-protes: &protes
+  image: foca-plugins-e2e-protes:local
+  pull_policy: build
+  build:
+    context: .
+    dockerfile: Dockerfile.protes
+    additional_contexts:
+      wheels: ${E2E_WORK_DIR:?}/wheels
+  environment:
+    CELERY_BROKER_URL: pyamqp://e2e:e2e@rabbitmq:5672//
+    # `config.yaml`, and `config-on-error.yaml` after it for
+    # `teardown_on_error` (paths separated by `:`)
+    FOCA_CONFIG_OVERLAY: ${E2E_OVERLAY:-/e2e/config.yaml}
+  volumes:
+    - ./config.yaml:/e2e/config.yaml:ro
+    - ./config-on-error.yaml:/e2e/config-on-error.yaml:ro
+  networks: [stack]
+  depends_on:
+    mongodb:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+    services:
+      condition: service_healthy
+
+services:
+
+  # The only service on a network with a gateway, for its published port
+  protes:
+    <<: *protes
+    networks: [stack, published]
+    ports:
+      - "127.0.0.1:${E2E_PORT:-18080}:8080"
+
+  protes-worker:
+    <<: *protes
+    command: ["celery", "--app", "pro_tes.celery_worker", "worker", "--loglevel=info"]
+    healthcheck:
+      test: ["CMD-SHELL", "celery --app pro_tes.celery_worker inspect ping --destination celery@$$HOSTNAME --timeout 10"]
+      interval: 5s
+      timeout: 20s
+      retries: 12
+      start_period: 10s
+
+  # The identity provider and the files, in the image of proTES (Python,
+  # PyJWT and cryptography)
+  services:
+    networks: [stack]
+    image: foca-plugins-e2e-protes:local
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile.protes
+      additional_contexts:
+        wheels: ${E2E_WORK_DIR:?}/wheels
+    command: ["python", "/e2e/services.py", "/data"]
+    environment:
+      HEALTHCHECK_URL: http://localhost:8080/health
+    volumes:
+      - ./services.py:/e2e/services.py:ro
+      - ${E2E_WORK_DIR:?}/data:/data:ro
+    healthcheck:
+      interval: 2s
+      start_period: 5s
+
+  funnel:
+    networks: [stack]
+    image: foca-plugins-e2e-funnel:local
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile.funnel
+    command:
+      - server
+      - run
+      - --config
+      - /etc/funnel.yaml
+      - --Worker.WorkDir
+      - ${E2E_WORK_DIR:?}/funnel
+    # Root for the Docker socket
+    user: "0:0"
+    volumes:
+      - ./funnel.yaml:/etc/funnel.yaml:ro
+      - ${E2E_WORK_DIR:?}/funnel:${E2E_WORK_DIR:?}/funnel
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "/app/funnel", "task", "list", "--server", "http://localhost:8000"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  rabbitmq:
+    networks: [stack]
+    image: docker.io/library/rabbitmq:4.3.7@sha256:6c988780c85e08b7f12395973b89bda8fb3fe2f656498a74b1479a37f9903e48
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: e2e
+      RABBITMQ_DEFAULT_PASS: e2e
+    configs:
+      - source: rabbitmq-foca
+        target: /etc/rabbitmq/conf.d/90-foca.conf
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "--quiet", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 10s
+
+  mongodb:
+    networks: [stack]
+    image: docker.io/library/mongo:7.0.25@sha256:82db6c6c8103eee46ca820c190742b7c280d02d6f993903a603cec9d56be374b
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+# Celery declares transient non-exclusive queues, which RabbitMQ 4.3 denies
+# by default (as in proTES)
+configs:
+  rabbitmq-foca:
+    content: |
+      deprecated_features.permit.transient_nonexcl_queues = true
+
+networks:
+  # No gateway, and no route from or to the host
+  stack:
+    internal: true
+  # For the published port of proTES only
+  published:
