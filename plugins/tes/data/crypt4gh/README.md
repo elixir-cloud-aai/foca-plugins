@@ -87,7 +87,8 @@ executors:
 ]
 ```
 
-Annotations, counts only: `encrypted_inputs` and `key_inputs`. Other
+Annotations, counts only: `encrypted_inputs` and `key_inputs`, for all
+tasks but those left to the app in step 1. Other
 inputs (e.g., a reference genome) are left where they are.
 
 ### The decryption executor
