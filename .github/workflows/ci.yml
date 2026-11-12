@@ -297,16 +297,25 @@ jobs:
       - name: Build documentation
         run: uv run --no-sync mkdocs build --strict
   # The image of `tes.data.crypt4gh`'s decryption executor
-  # (`plugins/tes/data/crypt4gh/image/`): built, not pushed (it is not
-  # published yet), and run on a key pair and a Crypt4GH file made in the
-  # test, as the plugin's executor runs it. Always runs (a minute or two), so
-  # that the gate needs no rule for a skip
+  # (`plugins/tes/data/crypt4gh/image/`): built, not pushed (the release
+  # workflow publishes it, on the plugin's tag), run on a key pair and a
+  # Crypt4GH file made in the test, as the plugin's executor runs it, and
+  # scanned with Trivy (shared action
+  # `elixir-cloud-aai/.github/actions/scan-image`): the findings that have a
+  # fix go to code scanning (not for pull requests from forks, whose token
+  # can't write them), and the job fails on critical and high ones that have
+  # a fix, except those accepted in `.trivyignore.yaml`, as the release
+  # workflow's scan would. Always runs (a few minutes), so that the gate needs
+  # no rule for a skip
   smoke:
     name: Smoke test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write # upload SARIF to code scanning
     env:
-      IMAGE: crypt4gh-decrypt:ci
+      IMAGE: foca-plugin-tes-data-crypt4gh-decrypt:ci
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -324,6 +333,12 @@ jobs:
           pipx run --spec pip-audit==2.10.1 pip-audit \
             --requirement plugins/tes/data/crypt4gh/image/requirements.txt \
             --require-hashes --disable-pip --progress-spinner off
+      - name: Scan image
+        uses: elixir-cloud-aai/.github/actions/scan-image@743e82d290a53768454999e413756a924e383259 # v1.0.0
+        with:
+          image: ${{ env.IMAGE }}
+          category: crypt4gh-decrypt-image
+          upload: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
   # The only required check: passes if every other job passed, or was skipped
   # where that is intended: `test` if no plugin is affected (the matrix would
   # be empty), `title` on pushes and for Dependabot. Any other result
