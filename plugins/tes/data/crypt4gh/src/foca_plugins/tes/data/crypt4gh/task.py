@@ -3,8 +3,10 @@
 The task gets a volume for the decrypted files and, as its first executor,
 the decryption executor, which writes the decrypted files to the volume;
 the arguments of the task's own executors that name a Crypt4GH input are
-changed to its decrypted file. Which inputs are Crypt4GH files and keys is
-decided by the gateway-neutral :py:mod:`.inputs`.
+changed to its decrypted file. As its last executor, the task may get the
+teardown executor, which empties the volume again. Which inputs
+are Crypt4GH files and keys is decided by the gateway-neutral
+:py:mod:`.inputs`.
 
 Fields and items of the wrong type (e.g., `inputs` that is no list, or
 items that are no objects) are skipped and kept as they are, and a task
@@ -243,6 +245,23 @@ def decryption_executor(
     return {"image": image, "command": arguments}
 
 
+def teardown_executor(
+    *, image: str, command: Sequence[str], volume: str
+) -> dict[str, Any]:
+    """Build the teardown executor.
+
+    Args:
+        image: Image of the decryption executor.
+        command: Command of the decryption script in the image.
+        volume: Path of the volume of the decrypted files.
+
+    Returns:
+        TES executor that removes everything in the volume, which tasks may
+        not use otherwise (cf. :py:mod:`.decrypt` for the arguments).
+    """
+    return {"image": image, "command": [*command, "--clear", volume]}
+
+
 def rewritten(
     task: dict[str, Any],
     found: Crypt4ghInputs,
@@ -281,6 +300,8 @@ def rewrite(
     command: Sequence[str],
     volume: str,
     again: bool = False,
+    teardown: bool = False,
+    ignore_errors: bool = False,
 ) -> None:
     """Add the decryption to a task, in place.
 
@@ -291,22 +312,33 @@ def rewrite(
         command: Command of the decryption script in the image.
         volume: Path of the volume of the decrypted files.
         again: Whether the task has the decryption already (cf.
-            :py:func:`rewritten`); then only the arguments of the executors
-            after the decryption executor are changed.
+            :py:func:`rewritten`); then only the executors after the
+            decryption executor are changed, and the volume isn't added
+            again.
+        teardown: Whether to add the teardown executor after the task's
+            own executors; copies of it among them are dropped, so that it
+            runs once, at the end.
+        ignore_errors: Whether the task's own executors get `ignore_error`,
+            so that the teardown executor runs after they fail (if the
+            backend supports it); the decryption and teardown executors
+            don't get it.
     """
     targets = {file.path: target(volume, file.name) for file in found.files}
-    for index, executor in objects(task, "executors"):
-        if again and index == 0:
+    decryption = decryption_executor(found, image=image, command=command, volume=volume)
+    removal = teardown_executor(image=image, command=command, volume=volume)
+    own = items(task, "executors")[1 if again else 0 :]
+    if teardown:
+        own = [executor for executor in own if executor != removal]
+    for executor in own:
+        if not isinstance(executor, dict):
             continue
         args = executor.get("command")
         if isinstance(args, list):
             executor["command"] = [alias(arg, targets) for arg in args]
         if "stdin" in executor:
             executor["stdin"] = alias(executor["stdin"], targets)
-    if again:
-        return
-    task["executors"] = [
-        decryption_executor(found, image=image, command=command, volume=volume),
-        *items(task, "executors"),
-    ]
-    task["volumes"] = [*items(task, "volumes"), volume]
+        if ignore_errors:
+            executor["ignore_error"] = True
+    task["executors"] = [decryption, *own, *([removal] if teardown else [])]
+    if not again:
+        task["volumes"] = [*items(task, "volumes"), volume]

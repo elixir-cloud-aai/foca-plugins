@@ -4,8 +4,11 @@
 # image's `crypt4gh` tools, then runs the decryption with the arguments that
 # the plugin's executor gets (several `--key` and `--file` options), with
 # the inputs mounted read-only and a read-only root file system, and checks
-# the decrypted files and their modes; and that a failure removes the files
-# decrypted before it. Needs Docker; the image must be built.
+# the decrypted files and their modes; that the teardown (`--clear`, as the
+# plugin's teardown executor runs it) empties the volume, keeps the volume
+# itself and files outside it, also when run again; and that a failure
+# removes the files decrypted before it. Needs Docker; the image must be
+# built.
 #
 # Usage: image/smoke.sh IMAGE
 
@@ -56,6 +59,24 @@ for name in alice bob; do
 done
 [[ "$(stat -c %a "${work}/vol/crypt4gh")" == 755 ]] ||
   fail "Directory of the decrypted files is not readable by all"
+
+# The teardown empties the volume: the decrypted files, a temporary file
+# left by a stopped decryption, and files derived from the decrypted ones
+# (also in directories); a link out of the volume is removed, not
+# followed. It keeps the volume and files outside it, and may run again
+docker run --rm -v "${work}/vol:/vol" "${image}" sh -euc '
+  echo partial > /vol/crypt4gh/.alice.txt.x1y2
+  mkdir /vol/crypt4gh/index
+  echo derived > /vol/crypt4gh/index/alice.txt.idx
+  echo keep > /vol/keep
+  ln -s /vol /vol/crypt4gh/link
+'
+for run in first second; do
+  decrypt --clear /vol/crypt4gh || fail "Teardown failed on its ${run} run"
+done
+[[ -d "${work}/vol/crypt4gh" ]] || fail "Teardown removed the volume"
+[[ -z "$(ls -A "${work}/vol/crypt4gh")" ]] || fail "Teardown left files"
+[[ -f "${work}/vol/keep" ]] || fail "Teardown removed a file outside the volume"
 
 # The second file is for a key that isn't given: the decryption fails, and
 # the first file, decrypted before, is removed

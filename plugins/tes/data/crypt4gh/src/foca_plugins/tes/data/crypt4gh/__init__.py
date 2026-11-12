@@ -6,7 +6,8 @@ Crypt4GH files; this plugin adds, in the `request` phase, a decryption
 executor before the task's own executors, which decrypts the task's
 Crypt4GH inputs with the secret keys among its inputs to a volume of their
 own, and changes the arguments of the task's executors that name a
-Crypt4GH input to its decrypted file.
+Crypt4GH input to its decrypted file. A teardown executor after the task's
+own executors empties the volume of the decrypted files again.
 
 Parts:
 
@@ -51,6 +52,13 @@ class Crypt4ghConfig(BaseModel):
             it or paths in it.
         encrypted_suffixes: Suffixes of the names of Crypt4GH inputs.
         key_suffixes: Suffixes of the names of secret keys among the inputs.
+        teardown: Whether to add the teardown executor, which empties the
+            volume (the decrypted files and everything else in it) after
+            the task's own executors.
+        teardown_on_error: Whether the task's own executors get
+            `ignore_error`, so that the teardown executor runs after they
+            fail; changes how backends run and report the task, and some
+            refuse it (cf. the README).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -66,6 +74,8 @@ class Crypt4ghConfig(BaseModel):
     key_suffixes: tuple[Suffix, ...] = Field(
         default=(".sec",), min_length=1, max_length=16
     )
+    teardown: bool = True
+    teardown_on_error: bool = False
 
     @field_validator("volume")
     @classmethod
@@ -110,6 +120,20 @@ class Crypt4ghConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_teardown(self) -> Self:
+        """Check that `teardown_on_error` comes with `teardown`.
+
+        Returns:
+            The settings.
+
+        Raises:
+            ValueError: `teardown_on_error` is set without `teardown`.
+        """
+        if self.teardown_on_error and not self.teardown:
+            raise ValueError("teardown_on_error needs teardown")
+        return self
+
 
 class Crypt4gh(Plugin[Crypt4ghConfig, EmptyModel]):
     """Decrypt Crypt4GH inputs in an extra executor.
@@ -126,8 +150,9 @@ class Crypt4gh(Plugin[Crypt4ghConfig, EmptyModel]):
         "Adds an executor before the task's own ones that decrypts the task's"
         " Crypt4GH inputs with the secret keys among its inputs to a volume of"
         " their own, and points the arguments of the task's executors that name"
-        " a Crypt4GH input to its decrypted file. Leaves tasks without Crypt4GH"
-        " inputs as they are."
+        " a Crypt4GH input to its decrypted file, and an executor after them"
+        " that empties the volume of the decrypted files. Leaves tasks without"
+        " Crypt4GH inputs as they are."
     )
     data_transfers = ()
     # Nothing in the plugin store (listed by FOCA 0.19; declared here, as
@@ -197,4 +222,6 @@ class Crypt4gh(Plugin[Crypt4ghConfig, EmptyModel]):
             command=settings.command,
             volume=settings.volume,
             again=own is not None,
+            teardown=settings.teardown,
+            ignore_errors=settings.teardown_on_error,
         )
