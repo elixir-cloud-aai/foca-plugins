@@ -4,7 +4,7 @@ The task gets a volume for the decrypted files and, as its first executor,
 the decryption executor, which writes the decrypted files to the volume;
 the arguments of the task's own executors that name a Crypt4GH input are
 changed to its decrypted file. As its last executor, the task may get the
-teardown executor, which removes the decrypted files again. Which inputs
+teardown executor, which empties the volume again. Which inputs
 are Crypt4GH files and keys is decided by the gateway-neutral
 :py:mod:`.inputs`.
 

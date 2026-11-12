@@ -26,7 +26,8 @@ With `--clear`, the script removes everything in `DIRECTORY` (the volume of
 the decrypted files, which belongs to the plugin), but keeps the directory
 itself, which may be a mount point: the decrypted files, temporary files
 of a stopped decryption, and files that the task's executors derived from
-the decrypted files there. Symbolic links are removed, not followed. A
+the decrypted files there. Symbolic links in it are removed, not
+followed, and a `DIRECTORY` that is a link is refused. A
 missing directory is fine, so that it may run again; if an entry can't be
 removed, it goes on with the others and exits with status 1.
 """
@@ -203,7 +204,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(
         prog="crypt4gh-decrypt",
-        description="Decrypt Crypt4GH files, or remove the decrypted files.",
+        description=(
+            "Decrypt Crypt4GH files, or empty the directory of the decrypted files."
+        ),
     )
     parser.add_argument(
         "--key",
@@ -238,6 +241,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         # Resolved, so that `//`, `/x/..` or a link to `/` count as `/`
         if not args.clear.is_absolute() or os.path.realpath(args.clear) == "/":
             parser.error("--clear needs an absolute path other than /")
+        # Links are never followed, the directory's own neither
+        if args.clear.is_symlink():
+            parser.error("--clear needs a directory, not a symbolic link")
         return args
     missing = [
         option
@@ -250,7 +256,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Decrypt the files of the arguments, or remove the decrypted files.
+    """Decrypt the files of the arguments, or empty a directory.
 
     Args:
         argv: Arguments; defaults to those of the command line.

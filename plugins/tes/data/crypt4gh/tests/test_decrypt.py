@@ -698,6 +698,25 @@ def test_refuses_bad_clear_arguments(
     assert message in error
 
 
+def test_refuses_to_clear_links(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A directory that is a symbolic link isn't followed, so not emptied.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        capsys: Captured output.
+    """
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "keep").write_bytes(b"keep")
+    (tmp_path / "vol").symlink_to(tmp_path / "data")
+    with pytest.raises(SystemExit) as raised:
+        decrypt.main(["--clear", str(tmp_path / "vol")])
+    assert raised.value.code == 2
+    assert "not a symbolic link" in capsys.readouterr().err
+    assert (tmp_path / "data" / "keep").exists()
+
+
 def test_runs_executor_of_plugin(
     tmp_path: Path, alice: KeyPair, encrypt_file: Encrypt
 ) -> None:

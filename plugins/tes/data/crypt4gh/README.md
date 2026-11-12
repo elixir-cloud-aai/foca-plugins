@@ -6,7 +6,7 @@ inputs of TES tasks, which TES implementations can't read themselves: adds
 an executor before the task's own ones that decrypts the Crypt4GH inputs
 with the secret keys among the task's inputs to a volume of its own,
 points the task's executors to the decrypted files, and adds an executor
-after them that removes the decrypted files. The successor of the Crypt4GH
+after them that empties that volume again. The successor of the Crypt4GH
 middleware of proTES.
 <!-- --8<-- [end:summary] -->
 
@@ -129,7 +129,8 @@ that a stopped decryption may have left, and files that the task's
 executors derived from the decrypted files there (e.g., an index written
 next to its input). The volume is reserved for the plugin (no input,
 output or volume of the task may be in it), so nothing there is the
-task's result. Symbolic links are removed, not followed. An empty or
+task's result. Symbolic links in it are removed, not followed, and a
+volume that is a link is refused. An empty or
 missing volume is fine, so that a restarted executor runs again. If an
 entry can't be removed, the executor removes the others and exits with
 status 1, so that the task fails (`EXECUTOR_ERROR`) and the entries that
@@ -237,10 +238,10 @@ The plugin moves no data itself, but the tasks that it changes do:
   that only the task can read.
 - **Decrypted files are written to the task's volume**, on the backend's
   disks. The teardown executor removes them, with everything else in the
-  volume, after the task's own executors, if they all succeed (or with `teardown_on_error`, where the
-  backend supports it); otherwise they are removed with the task's working
-  directory, as far as the backend removes it (see [The teardown
-  executor](#the-teardown-executor)). Removing a file doesn't overwrite
+  volume, after the task's own executors, if they all succeed (or with
+  `teardown_on_error`, where the backend supports it); otherwise they are
+  removed with the task's working directory, as far as the backend
+  removes it (see [The teardown executor](#the-teardown-executor)). Removing a file doesn't overwrite
   its blocks on the disk, and copies that the task's executors make
   outside the volume stay.
 
@@ -271,7 +272,7 @@ FOCA's plugin engine:
   inputs but no key.
 - The image is a setting, built from this repository, instead of a fixed
   image.
-- A teardown executor removes the decrypted files after the task's own
+- A teardown executor empties the volume after the task's own
   executors (`teardown`).
 
 ## Installation
