@@ -70,19 +70,13 @@ def decryption_executor(*files: tuple[str, str]) -> dict[str, Any]:
     return {"image": IMAGE, "command": command}
 
 
-def teardown_executor(*targets: str) -> dict[str, Any]:
-    """Build the expected teardown executor.
-
-    Args:
-        targets: Decrypted files.
+def teardown_executor() -> dict[str, Any]:
+    """Build the expected teardown executor, with the default volume.
 
     Returns:
         Executor.
     """
-    command = ["crypt4gh-decrypt"]
-    for path in targets:
-        command += ["--remove", path]
-    return {"image": IMAGE, "command": command}
+    return {"image": IMAGE, "command": ["crypt4gh-decrypt", "--clear", VOLUME]}
 
 
 def make_context() -> Context:
@@ -208,7 +202,7 @@ def test_on_request_adds_decryption(plugin: Crypt4gh) -> None:
                 "image": "aligner",
                 "command": ["align", "/in/ref.fa", "/vol/crypt4gh/reads.fq", "/out"],
             },
-            teardown_executor("/vol/crypt4gh/reads.fq"),
+            teardown_executor(),
         ],
         volumes=[VOLUME],
     )
@@ -269,7 +263,7 @@ def test_on_request_uses_settings() -> None:
         {"image": "x", "command": ["cat", "/data/plain/a"]},
         {
             "image": "decrypt:1",
-            "command": ["python3", "/app/decrypt.py", "--remove", "/data/plain/a"],
+            "command": ["python3", "/app/decrypt.py", "--clear", "/data/plain"],
         },
     ]
     assert request.payload["volumes"] == ["/data/plain"]
@@ -315,7 +309,7 @@ def test_on_request_runs_teardown_after_errors() -> None:
         "ignore_error": True,
     }
     assert executors[3] == "not an executor"
-    assert executors[4] == teardown_executor("/vol/crypt4gh/reads.fq")
+    assert executors[4] == teardown_executor()
     once = copy.deepcopy(request.payload)
     again = make_inbound(copy.deepcopy(once))
     plugin.on_request(again, make_context())
@@ -323,22 +317,27 @@ def test_on_request_runs_teardown_after_errors() -> None:
 
 
 def test_on_request_moves_teardown_to_the_end(plugin: Crypt4gh) -> None:
-    """Copies of the teardown executor among the task's own are dropped.
+    """Exact copies of the teardown executor among the task's own are dropped.
 
     The teardown runs once, after all of the task's own executors, also if
-    the task names it before them.
+    the task names it before them. Executors that differ from it in any
+    field (another volume, `ignore_error`) are the task's own and are kept.
 
     Args:
         plugin: Plugin.
     """
-    early = teardown_executor("/vol/crypt4gh/reads.fq")
-    other = {"image": IMAGE, "command": ["crypt4gh-decrypt", "--remove", "/x"]}
-    task = make_task(executors=[early, {"image": "a", "command": ["true"]}, other])
+    early = teardown_executor()
+    other_volume = {"image": IMAGE, "command": ["crypt4gh-decrypt", "--clear", "/x"]}
+    near_copy = {**early, "ignore_error": False}
+    task = make_task(
+        executors=[early, {"image": "a", "command": ["true"]}, other_volume, near_copy]
+    )
     request = make_inbound(task)
     plugin.on_request(request, make_context())
     assert request.payload["executors"][1:] == [
         {"image": "a", "command": ["true"]},
-        other,
+        other_volume,
+        near_copy,
         early,
     ]
 
@@ -472,7 +471,7 @@ def test_on_request_keeps_malformed_items(plugin: Crypt4gh) -> None:
     assert payload["executors"][1:] == [
         "e",
         {"image": "a", "command": [1, "/vol/crypt4gh/reads.fq"]},
-        teardown_executor("/vol/crypt4gh/reads.fq"),
+        teardown_executor(),
     ]
     assert payload["volumes"] == [VOLUME]
     assert payload["outputs"] == task["outputs"]
@@ -722,7 +721,7 @@ def test_on_request_changes_arguments_of_rewritten_tasks(plugin: Crypt4gh) -> No
     assert executors[2]["command"] == ["cat", "/vol/crypt4gh/reads.fq"]
     assert executors[2]["stdin"] == "/vol/crypt4gh/reads.fq"
     # The teardown moves after the added executor
-    assert executors[3] == teardown_executor("/vol/crypt4gh/reads.fq")
+    assert executors[3] == teardown_executor()
     assert again.payload["volumes"] == [VOLUME]
 
 

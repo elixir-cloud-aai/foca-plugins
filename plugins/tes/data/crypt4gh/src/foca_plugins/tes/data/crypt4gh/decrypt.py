@@ -11,7 +11,7 @@ Usage::
 
     crypt4gh-decrypt --key KEY [--key KEY ...]
         --file SOURCE TARGET [--file SOURCE TARGET ...]
-    crypt4gh-decrypt --remove TARGET [--remove TARGET ...]
+    crypt4gh-decrypt --clear DIRECTORY
 
 Each `SOURCE` (a Crypt4GH file) is decrypted with the secret keys (Crypt4GH
 or OpenSSH ed25519 keys without passphrase; a file decrypts with any of
@@ -22,16 +22,21 @@ users. If a key can't be read or a file can't be decrypted, the targets
 written so far are removed and the script exits with status 1, so that the
 task's own executors don't run.
 
-With `--remove`, the script removes each `TARGET` and the temporary files
-left next to it (e.g., by a decryption that was stopped); missing files
-are fine, so that it may run again. If a file can't be removed, it goes on
-with the others and exits with status 1.
+With `--clear`, the script removes everything in `DIRECTORY` (the volume of
+the decrypted files, which belongs to the plugin), but keeps the directory
+itself, which may be a mount point: the decrypted files, temporary files
+of a stopped decryption, and files that the task's executors derived from
+the decrypted files there. Symbolic links are removed, not followed. A
+missing directory is fine, so that it may run again; if an entry can't be
+removed, it goes on with the others and exits with status 1.
 """
 
 import argparse
 from collections.abc import Sequence
 import logging
+import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 
@@ -151,40 +156,37 @@ def remove(paths: Sequence[Path]) -> None:
             logger.warning("Can't remove %s: %s", path, error)
 
 
-def remove_targets(targets: Sequence[Path]) -> bool:
-    """Remove decrypted files and their temporary files, as far as possible.
+def clear(directory: Path) -> bool:
+    """Remove everything in a directory, as far as possible, but keep it.
 
     Args:
-        targets: Paths of the decrypted files.
+        directory: Path of the directory.
 
     Returns:
-        Whether all of them, and all temporary files next to them (named
-        as by :py:func:`decrypt_file`), are gone; missing files count as
-        gone.
+        Whether the directory is empty or missing.
     """
+    try:
+        entries = sorted(directory.iterdir())
+    except FileNotFoundError:
+        return True
+    except OSError as error:
+        logger.warning("Can't list %s: %s", directory, error)
+        return False
     done = True
-    for target in targets:
-        prefix = f".{target.name}."
+    for entry in entries:
         try:
-            leftovers = [
-                path for path in target.parent.iterdir() if path.name.startswith(prefix)
-            ]
+            # Links are removed, never followed
+            if entry.is_dir() and not entry.is_symlink():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
         except FileNotFoundError:
-            leftovers = []
-        except OSError as error:
-            logger.error("Can't list %s: %s", target.parent, error)
+            continue
+        except OSError as error:  # go on with the others
+            logger.warning("Can't remove %s: %s", entry, error)
             done = False
-            leftovers = []
-        for path in (target, *leftovers):
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                continue
-            except OSError as error:  # go on with the others
-                logger.error("Can't remove %s: %s", path, error)
-                done = False
-                continue
-            logger.info("Removed %s", path)
+            continue
+        logger.info("Removed %s", entry)
     return done
 
 
@@ -196,12 +198,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
     Returns:
         Arguments `keys` (paths) and `files` (pairs of source and target
-        paths), or `remove` (paths of decrypted files); those not given are
-        `None`.
+        paths), or `clear` (path of the directory to empty); those not
+        given are `None`.
     """
     parser = argparse.ArgumentParser(
         prog="crypt4gh-decrypt",
-        description="Decrypt Crypt4GH files, or remove decrypted files.",
+        description="Decrypt Crypt4GH files, or remove the decrypted files.",
     )
     parser.add_argument(
         "--key",
@@ -221,17 +223,21 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Crypt4GH file and path of the decrypted file (repeatable)",
     )
     parser.add_argument(
-        "--remove",
-        dest="remove",
-        action="append",
+        "--clear",
         type=Path,
-        metavar="TARGET",
-        help="decrypted file to remove (repeatable; not with --key or --file)",
+        metavar="DIRECTORY",
+        help=(
+            "absolute path of the directory of the decrypted files, whose"
+            " contents to remove (not with --key or --file)"
+        ),
     )
     args = parser.parse_args(argv)
-    if args.remove:
+    if args.clear is not None:
         if args.keys or args.files:
-            parser.error("--remove can't be combined with --key or --file")
+            parser.error("--clear can't be combined with --key or --file")
+        # Resolved, so that `//`, `/x/..` or a link to `/` count as `/`
+        if not args.clear.is_absolute() or os.path.realpath(args.clear) == "/":
+            parser.error("--clear needs an absolute path other than /")
         return args
     missing = [
         option
@@ -244,21 +250,21 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Decrypt the files of the arguments, or remove decrypted files.
+    """Decrypt the files of the arguments, or remove the decrypted files.
 
     Args:
         argv: Arguments; defaults to those of the command line.
 
     Returns:
-        Exit status: 0 if all files were decrypted (or removed), 1
-        otherwise.
+        Exit status: 0 if all files were decrypted (or the directory was
+        emptied), 1 otherwise.
     """
     # Warnings of `crypt4gh` only: its debug messages include key material
     logging.basicConfig(level=logging.WARNING, format="%(name)s: %(message)s")
     logger.setLevel(logging.INFO)
     args = parse_args(argv)
-    if args.remove:
-        return 0 if remove_targets(args.remove) else 1
+    if args.clear is not None:
+        return 0 if clear(args.clear) else 1
     targets = [target for _, target in args.files]
     written: list[Path] = []
     try:

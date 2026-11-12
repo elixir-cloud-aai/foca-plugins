@@ -246,24 +246,20 @@ def decryption_executor(
 
 
 def teardown_executor(
-    found: Crypt4ghInputs, *, image: str, command: Sequence[str], volume: str
+    *, image: str, command: Sequence[str], volume: str
 ) -> dict[str, Any]:
     """Build the teardown executor.
 
     Args:
-        found: Crypt4GH files and keys among the task's inputs.
         image: Image of the decryption executor.
         command: Command of the decryption script in the image.
         volume: Path of the volume of the decrypted files.
 
     Returns:
-        TES executor that removes each decrypted file from the volume (cf.
-        :py:mod:`.decrypt` for the arguments).
+        TES executor that removes everything in the volume, which tasks may
+        not use otherwise (cf. :py:mod:`.decrypt` for the arguments).
     """
-    arguments = list(command)
-    for file in found.files:
-        arguments += ["--remove", target(volume, file.name)]
-    return {"image": image, "command": arguments}
+    return {"image": image, "command": [*command, "--clear", volume]}
 
 
 def rewritten(
@@ -329,7 +325,7 @@ def rewrite(
     """
     targets = {file.path: target(volume, file.name) for file in found.files}
     decryption = decryption_executor(found, image=image, command=command, volume=volume)
-    removal = teardown_executor(found, image=image, command=command, volume=volume)
+    removal = teardown_executor(image=image, command=command, volume=volume)
     own = items(task, "executors")[1 if again else 0 :]
     if teardown:
         own = [executor for executor in own if executor != removal]

@@ -73,10 +73,11 @@ middleware of proTES.
    `--in=/in/reads.fq.c4gh` keeps the encrypted file, as do `env` and
    `workdir`.
 7. With `teardown` (the default), adds the teardown executor after the
-   task's own executors, which removes the decrypted files (see [The
-   teardown executor](#the-teardown-executor)); copies of it among the
-   task's own executors are dropped, so that it runs once, at the end. With
-   `teardown_on_error`, the task's own executors get `ignore_error: true`.
+   task's own executors, which empties the volume (see [The teardown
+   executor](#the-teardown-executor)). Exact copies of it among the task's
+   own executors are moved to the end, not kept where they are, so that it
+   runs once, after all of them. With `teardown_on_error`, the task's own
+   executors get `ignore_error: true`.
 
 For example, a task with the inputs `/in/reads.fq.c4gh` and
 `/keys/alice.sec` and the executor `align /in/reads.fq.c4gh` gets these
@@ -92,7 +93,7 @@ executors:
   {"image": "aligner", "command": ["align", "/vol/crypt4gh/reads.fq"]},
   {
     "image": "<image>",
-    "command": ["crypt4gh-decrypt", "--remove", "/vol/crypt4gh/reads.fq"]
+    "command": ["crypt4gh-decrypt", "--clear", "/vol/crypt4gh"]
   }
 ]
 ```
@@ -122,15 +123,19 @@ executors run once each, in order.
 ### The teardown executor
 
 The teardown executor runs the same script, in the same image, with
-`--remove` and the paths of the decrypted files. It removes them, and the
-temporary files that a stopped decryption may have left next to them;
-files that are gone already are fine, so that a restarted executor runs
-again. Other files in the volume (e.g., files that the task's executors
-wrote there) are kept. If a file can't be removed, the executor removes
-the others and exits with status 1, so that the task fails
-(`EXECUTOR_ERROR`) and the files that remain show in its logs; backends
-may then skip uploading the task's outputs. It runs before the backend
-uploads the outputs, which is fine, as no output may be in the volume.
+`--clear` and the `volume`. It removes everything in the volume, but not
+the volume itself (a mount point): the decrypted files, temporary files
+that a stopped decryption may have left, and files that the task's
+executors derived from the decrypted files there (e.g., an index written
+next to its input). The volume is reserved for the plugin (no input,
+output or volume of the task may be in it), so nothing there is the
+task's result. Symbolic links are removed, not followed. An empty or
+missing volume is fine, so that a restarted executor runs again. If an
+entry can't be removed, the executor removes the others and exits with
+status 1, so that the task fails (`EXECUTOR_ERROR`) and the entries that
+remain show in its logs; backends may then skip uploading the task's
+outputs. Copies of the decrypted data that the task's executors write
+outside the volume are not removed.
 
 TES runs a task's executors in order and stops at the first that fails
 (TES 1.1, `ignore_error`). So, by default, the teardown executor runs only
@@ -143,7 +148,7 @@ failed decryption removes its own files.
 (not on the decryption and teardown executors), so that the teardown
 executor runs also after one of them fails. It is off by default, as it
 changes how the task runs and how it is reported, and not all backends
-support it:
+support it (as of the sources of Funnel and TESK in November 2026):
 
 - The task's next executors run after one of them fails, also those that
   need the failed executor's results.
@@ -215,8 +220,8 @@ and `plugins.pipeline`.
 | `config.volume` | absolute, normalized path below `/` | `/vol/crypt4gh` | volume of the decrypted files; tasks may not use it or paths in it |
 | `config.encrypted_suffixes` | 1 to 16 suffixes (a dot and 1 to 32 characters, no `/` or spaces) | `[".c4gh"]` | suffixes of the names of Crypt4GH inputs; the longest that matches is removed from the decrypted file's name |
 | `config.key_suffixes` | as `encrypted_suffixes`; none may end with one of them or the other way round (e.g., `.key.c4gh` and `.c4gh`) | `[".sec"]` | suffixes of the names of secret keys among the inputs |
-| `config.teardown` | boolean | `true` | add the teardown executor, which removes the decrypted files after the task's own executors (see [The teardown executor](#the-teardown-executor)) |
-| `config.teardown_on_error` | boolean; needs `teardown` | `false` | set `ignore_error: true` on the task's own executors, so that the teardown executor runs after they fail; changes how the task runs and is reported, and TESK refuses such tasks (see [The teardown executor](#the-teardown-executor)) |
+| `config.teardown` | boolean | `true` | add the teardown executor, which empties the volume after the task's own executors (see [The teardown executor](#the-teardown-executor)) |
+| `config.teardown_on_error` | boolean; needs `teardown` | `false` | set `ignore_error: true` on the task's own executors, so that the teardown executor runs after they fail; not for all backends (see [The teardown executor](#the-teardown-executor)) |
 
 The plugin has no parameters.
 
@@ -231,13 +236,13 @@ The plugin moves no data itself, but the tasks that it changes do:
   dataset (re-encrypt the data for them), and pass them by URL from storage
   that only the task can read.
 - **Decrypted files are written to the task's volume**, on the backend's
-  disks. The teardown executor removes them after the task's own
-  executors, if they all succeed (or with `teardown_on_error`, where the
+  disks. The teardown executor removes them, with everything else in the
+  volume, after the task's own executors, if they all succeed (or with `teardown_on_error`, where the
   backend supports it); otherwise they are removed with the task's working
   directory, as far as the backend removes it (see [The teardown
   executor](#the-teardown-executor)). Removing a file doesn't overwrite
   its blocks on the disk, and copies that the task's executors make
-  elsewhere stay.
+  outside the volume stay.
 
 Use the plugin only with TES backends that you trust with the decrypted
 data and the keys, e.g., in a trusted research environment.

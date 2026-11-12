@@ -522,13 +522,13 @@ def test_keeps_permissions_of_foreign_directories(
     [
         (["--key", "/in/alice.sec"], "--file"),
         (["--file", "/in/a.c4gh", "/vol/a"], "--key"),
-        ([], "--key"),
+        ([], "--key, --file"),
     ],
 )
 def test_needs_keys_and_files(
     argv: list[str], missing: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Keys and files are required arguments, unless files are removed.
+    """Keys and files are required arguments, unless a directory is cleared.
 
     Args:
         argv: Arguments.
@@ -541,70 +541,103 @@ def test_needs_keys_and_files(
     assert missing in capsys.readouterr().err
 
 
-def test_removes_targets(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    """The teardown removes the targets and temporary files left next to them.
+def test_clears_directory(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """The teardown removes everything in the directory, but keeps it.
 
-    Missing targets and directories are fine, so that the teardown may run
-    again; other files are kept.
+    Files, temporary files, directories and symbolic links are removed;
+    links are not followed. A missing directory is fine, so that the
+    teardown may run again.
 
     Args:
         tmp_path: Temporary directory of the test.
         caplog: Captured logs.
     """
-    out = tmp_path / "out"
-    out.mkdir()
-    for name in ("one", ".one.x1y2", ".one.b.z3", "other", ".other.x"):
-        (out / name).write_bytes(b"data")
+    volume = tmp_path / "vol"
+    outside = tmp_path / "outside"
+    (volume / "sub").mkdir(parents=True)
+    outside.mkdir()
+    (outside / "keep").write_bytes(b"keep")
+    for name in ("one", ".one.x1y2", "one.fai", "sub/derived"):
+        (volume / name).write_bytes(b"data")
+    (volume / "link").symlink_to(outside)
+    (volume / "file-link").symlink_to(outside / "keep")
     caplog.set_level(logging.INFO, logger="crypt4gh-decrypt")
-    targets = [out / "one", out / "two", tmp_path / "gone" / "x"]
-    argv = [arg for path in targets for arg in ("--remove", str(path))]
-    assert decrypt.main(argv) == 0
-    assert sorted(path.name for path in out.iterdir()) == [".other.x", "other"]
-    assert f"Removed {out / 'one'}" in caplog.text
-    assert decrypt.main(argv) == 0
+    assert decrypt.main(["--clear", str(volume)]) == 0
+    assert volume.is_dir()
+    assert list(volume.iterdir()) == []
+    assert (outside / "keep").read_bytes() == b"keep"
+    assert f"Removed {volume / 'one'}" in caplog.text
+    assert decrypt.main(["--clear", str(volume)]) == 0
+    assert decrypt.main(["--clear", str(tmp_path / "gone")]) == 0
 
 
-def test_fails_on_targets_that_cant_be_removed(
+def test_fails_on_entries_that_cant_be_removed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Targets that the teardown can't remove are logged; status 1.
+    """Entries that the teardown can't remove are logged; status 1.
 
-    The other targets are removed all the same.
+    The other entries are removed all the same.
 
     Args:
         tmp_path: Temporary directory of the test.
         monkeypatch: Patches `Path.unlink`.
         caplog: Captured logs.
     """
-    out = tmp_path / "out"
-    out.mkdir()
-    for name in ("one", ".one.x", "two"):
-        (out / name).write_bytes(b"data")
+    volume = tmp_path / "vol"
+    volume.mkdir()
+    for name in ("one", "two"):
+        (volume / name).write_bytes(b"data")
     unlink = Path.unlink
 
-    def refuse(path: Path, missing_ok: bool = False) -> None:
-        """Refuse to remove the target `one` and its temporary file.
+    def refuse_one(path: Path, missing_ok: bool = False) -> None:
+        """Refuse to remove the entry `one`.
 
         Args:
             path: Path.
             missing_ok: Whether a missing file is fine.
 
         Raises:
-            PermissionError: The path is the target `one` or its temporary
-                file.
+            PermissionError: The path is the entry `one`.
         """
-        if path.name in ("one", ".one.x"):
+        if path.name == "one":
             raise PermissionError(os.strerror(13))
         unlink(path, missing_ok=missing_ok)
 
-    monkeypatch.setattr(Path, "unlink", refuse)
-    status = decrypt.main(["--remove", str(out / "one"), "--remove", str(out / "two")])
-    assert status == 1
-    assert not (out / "two").exists()
-    assert f"Can't remove {out / 'one'}" in caplog.text
-    assert f"Can't remove {out / '.one.x'}" in caplog.text
+    monkeypatch.setattr(Path, "unlink", refuse_one)
+    assert decrypt.main(["--clear", str(volume)]) == 1
+    assert [path.name for path in volume.iterdir()] == ["one"]
+    assert f"Can't remove {volume / 'one'}" in caplog.text
+
+
+def test_skips_entries_removed_meanwhile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An entry that is gone when the teardown removes it is fine.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        monkeypatch: Patches `Path.unlink`.
+    """
+    volume = tmp_path / "vol"
+    volume.mkdir()
+    (volume / "one").write_bytes(b"data")
+
+    def gone(path: Path, missing_ok: bool = False) -> None:
+        """Act as if the entry was removed by someone else.
+
+        Args:
+            path: Path.
+            missing_ok: Whether a missing file is fine.
+
+        Raises:
+            FileNotFoundError: Always.
+        """
+        raise FileNotFoundError(os.strerror(2))
+
+    monkeypatch.setattr(Path, "unlink", gone)
+    assert decrypt.main(["--clear", str(volume)]) == 0
 
 
 def test_fails_on_directories_that_cant_be_listed(
@@ -612,18 +645,13 @@ def test_fails_on_directories_that_cant_be_listed(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A directory whose temporary files can't be listed fails the teardown.
-
-    The target is removed all the same.
+    """A directory that can't be listed fails the teardown.
 
     Args:
         tmp_path: Temporary directory of the test.
         monkeypatch: Patches `Path.iterdir`.
         caplog: Captured logs.
     """
-    out = tmp_path / "out"
-    out.mkdir()
-    (out / "one").write_bytes(b"data")
 
     def refuse(path: Path) -> None:
         """Refuse to list directories.
@@ -637,31 +665,37 @@ def test_fails_on_directories_that_cant_be_listed(
         raise PermissionError(os.strerror(13))
 
     monkeypatch.setattr(Path, "iterdir", refuse)
-    assert decrypt.main(["--remove", str(out / "one")]) == 1
-    assert not (out / "one").exists()
-    assert f"Can't list {out}" in caplog.text
+    assert decrypt.main(["--clear", str(tmp_path)]) == 1
+    assert f"Can't list {tmp_path}" in caplog.text
 
 
 @pytest.mark.parametrize(
-    "argv",
+    ("argv", "message"),
     [
-        ["--remove", "/vol/a", "--key", "/in/alice.sec"],
-        ["--remove", "/vol/a", "--file", "/in/a.c4gh", "/vol/a"],
+        (["--clear", "/vol/a", "--key", "/in/alice.sec"], "can't be combined"),
+        (["--clear", "/vol/a", "--file", "/in/a.c4gh", "/vol/a"], "can't be combined"),
+        (["--clear", "vol/a"], "absolute path other than /"),
+        (["--clear", "/"], "absolute path other than /"),
+        (["--clear", "//"], "absolute path other than /"),
+        (["--clear", "/vol/.."], "absolute path other than /"),
     ],
 )
-def test_refuses_removal_with_decryption(
-    argv: list[str], capsys: pytest.CaptureFixture[str]
+def test_refuses_bad_clear_arguments(
+    argv: list[str], message: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Removal doesn't go with keys or files.
+    """`--clear` needs an absolute path other than `/`, and no keys or files.
 
     Args:
         argv: Arguments.
+        message: Part of the expected error.
         capsys: Captured output.
     """
     with pytest.raises(SystemExit) as raised:
         decrypt.main(argv)
     assert raised.value.code == 2
-    assert "--remove" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "--clear" in error
+    assert message in error
 
 
 def test_runs_executor_of_plugin(
@@ -698,6 +732,6 @@ def test_runs_executor_of_plugin(
     assert decrypt.main(executors[0]["command"][1:]) == 0
     assert Path(executors[1]["command"][1]).read_bytes() == b"hello"
     assert executors[1]["command"][1] == str(volume / "data.txt")
-    assert executors[2]["command"][:2] == ["crypt4gh-decrypt", "--remove"]
+    assert executors[2]["command"] == ["crypt4gh-decrypt", "--clear", str(volume)]
     assert decrypt.main(executors[2]["command"][1:]) == 0
     assert list(volume.iterdir()) == []
