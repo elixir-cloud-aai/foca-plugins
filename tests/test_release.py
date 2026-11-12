@@ -26,8 +26,42 @@ def test_release(repo: Path) -> None:
         "path": DISTANCE.path,
         "name": DISTANCE.name,
         "version": "0.1.0",
+        "image": "",
     }
     assert release.release(META_TAG, repo)["path"] == "meta"
+
+
+def test_release_image(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Packages with an image name it; it needs the package's Dockerfile.
+
+    Args:
+        repo: Repository root.
+        monkeypatch: Patches the images of the packages.
+    """
+    new_plugin.create("tes", "routing", "distance", repo)
+    tag = "foca-plugin-tes-routing-distance-v0.1.0"
+    monkeypatch.setattr(release, "IMAGES", {DISTANCE.name: "distance-image"})
+    with pytest.raises(ValueError, match=re.escape("has no image/Dockerfile")):
+        release.release(tag, repo)
+    dockerfile = repo / DISTANCE.path / "image" / "Dockerfile"
+    dockerfile.parent.mkdir()
+    dockerfile.write_text("FROM scratch\n")
+    assert release.release(tag, repo)["image"] == "distance-image"
+    monkeypatch.setattr(release, "IMAGES", {})
+    with pytest.raises(ValueError, match=re.escape("no image name in IMAGES")):
+        release.release(tag, repo)
+
+
+def test_images() -> None:
+    """The images of the repository's packages have their Dockerfiles."""
+    root = Path(__file__).resolve().parents[1]
+    names = {package.name: package.path for package in release.discover(root)}
+    for name, image in release.IMAGES.items():
+        assert (root / names[name] / "image" / "Dockerfile").is_file()
+        assert re.fullmatch(r"[a-z0-9]+(?:[._-][a-z0-9]+)*", image)
+    assert release.IMAGES == {
+        "foca-plugin-tes-data-crypt4gh": "foca-plugin-tes-data-crypt4gh-decrypt"
+    }
 
 
 @pytest.mark.parametrize(

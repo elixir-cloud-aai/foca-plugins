@@ -1,9 +1,14 @@
 # Image of the decryption executor of `tes.data.crypt4gh`: Python, the
 # `crypt4gh` package and the decryption script (`decrypt.py` of the plugin's
-# package) as `crypt4gh-decrypt`. Build it from the plugin's directory, the
-# build context (only the files of `.dockerignore`'s allowlist go into it):
+# package) as `crypt4gh-decrypt`. Build it with the plugin's directory as
+# the build context (only the files of `.dockerignore`'s allowlist go into
+# it), e.g., from the repository root:
 #
-#   docker build -f image/Dockerfile -t crypt4gh-decrypt plugins/tes/data/crypt4gh
+#   docker build -f plugins/tes/data/crypt4gh/image/Dockerfile \
+#     -t crypt4gh-decrypt plugins/tes/data/crypt4gh
+#
+# The release workflow publishes it with each release of the plugin, as
+# `elixircloud/foca-plugin-tes-data-crypt4gh-decrypt:<version>`.
 #
 # The successor of the image of `protes-middleware-crypt4gh`
 

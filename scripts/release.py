@@ -5,7 +5,8 @@ Commands, run from the repository root as `python -m scripts.release
 GitHub error annotations:
 
 - `release TAG`: the package that a release tag (`<distribution>-v<version>`)
-  is for, as JSON (`path`, `name`, `version`), if the version matches and
+  is for, as JSON (`path`, `name`, `version`, and `image`: the name of its
+  Docker Hub repository in `IMAGES`, or empty), if the version matches and
   the package may be published (not the example).
 - `notes TAG`: the release notes of a tag: the section of its version in the
   package's `CHANGELOG.md`, which must be the only one of that version, in
@@ -81,6 +82,14 @@ FENCE = re.compile(r" {0,3}(?P<fence>`{3,}(?!.*`)|~{3,})")
 # A release's page in PyPI's JSON API (HTTP 404 if there is none)
 PYPI_RELEASE = "https://pypi.org/pypi/{name}/{version}/json"
 PYPI_TIMEOUT = 30.0
+# The packages with an image (`<package>/image/Dockerfile`, built with the
+# package's directory as the build context), released with the package by
+# the release workflow: the names of their Docker Hub repositories, created
+# by the maintainer before the first release with the image (see "Images"
+# in "Releasing" in the docs)
+IMAGES = {
+    "foca-plugin-tes-data-crypt4gh": "foca-plugin-tes-data-crypt4gh-decrypt",
+}
 
 
 def release(tag: str, root: Path = ROOT) -> dict[str, str]:
@@ -91,11 +100,14 @@ def release(tag: str, root: Path = ROOT) -> dict[str, str]:
         root: Repository root.
 
     Returns:
-        Path, name and version of the package.
+        Path, name and version of the package, and the name of its image
+        (empty if it has none).
 
     Raises:
         ValueError: The tag is malformed, of no package or of another
-            version, or the package must not be published.
+            version, or the package must not be published; or the package
+            has an image name but no Dockerfile, or the other way round, so
+            that no image is left out of a release by mistake.
     """
     name, separator, version = tag.rpartition("-v")
     package = next((p for p in discover(root) if p.name == name), None)
@@ -107,7 +119,15 @@ def release(tag: str, root: Path = ROOT) -> dict[str, str]:
     project = load_pyproject(root / package.path / "pyproject.toml")["project"]
     if PRIVATE_CLASSIFIER in project.get("classifiers", []):
         raise ValueError(f"{tag!r}: {name} is never published")
-    return {**asdict(package), "version": version}
+    image = IMAGES.get(name, "")
+    dockerfile = (root / package.path / "image" / "Dockerfile").is_file()
+    if image and not dockerfile:
+        raise ValueError(f"{tag!r}: {name} has no image/Dockerfile for {image!r}")
+    if dockerfile and not image:
+        raise ValueError(
+            f"{tag!r}: {name} has an image/Dockerfile, but no image name in IMAGES"
+        )
+    return {**asdict(package), "version": version, "image": image}
 
 
 def notes(tag: str, root: Path = ROOT) -> str:

@@ -86,7 +86,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           package="$(python -m scripts.release release "${TAG}")"
-          for key in path name version; do
+          for key in path name version image; do
               echo "${key}=$(jq -r ".${key}" <<< "${package}")" >> "${GITHUB_OUTPUT}"
           done
           version="$(jq -r .version <<< "${package}")"
@@ -99,33 +99,21 @@ jobs:
           else
               echo "prerelease=false" >> "${GITHUB_OUTPUT}"
           fi
-      # The image of the package, built from `<package>/image/Dockerfile`
-      # with the package's directory as the build context, or none. The
-      # Docker Hub repository of each image is created by the maintainer
-      # before the package's first release with it. A package with a
-      # Dockerfile but no image name here fails, so that no image is left
-      # out of a release by mistake
+      # The package's image (built from `<package>/image/Dockerfile`, with
+      # the package's directory as the build context), fully qualified, or
+      # none: the name of its Docker Hub repository comes from `IMAGES` in
+      # `scripts/release.py` (step "Check release tag", which fails for a
+      # Dockerfile without a name and the other way round)
       - name: Determine image
         id: image
         env:
-          NAME: ${{ steps.package.outputs.name }}
-          PACKAGE: ${{ steps.package.outputs.path }}
+          IMAGE: ${{ steps.package.outputs.image }}
         run: |
-          case "${NAME}" in
-              foca-plugin-tes-data-crypt4gh)
-                  image="${IMAGE_REGISTRY}/foca-plugin-tes-data-crypt4gh-decrypt" ;;
-              *)
-                  image="" ;;
-          esac
-          if [[ -n "${image}" && ! -f "${PACKAGE}/image/Dockerfile" ]]; then
-              echo "::error::${NAME} has an image name, but no ${PACKAGE}/image/Dockerfile"
-              exit 1
+          if [[ -n "${IMAGE}" ]]; then
+              echo "image=${IMAGE_REGISTRY}/${IMAGE}" >> "${GITHUB_OUTPUT}"
+          else
+              echo "image=" >> "${GITHUB_OUTPUT}"
           fi
-          if [[ -z "${image}" && -e "${PACKAGE}/image/Dockerfile" ]]; then
-              echo "::error::${PACKAGE}/image/Dockerfile has no image name in release.yml (step 'Determine image')"
-              exit 1
-          fi
-          echo "image=${image}" >> "${GITHUB_OUTPUT}"
       # Guards against accidental releases from unmerged commits. The `release`
       # environment's protection rules are what actually control publishing
       - name: Check release commit
@@ -338,15 +326,18 @@ jobs:
   # Attests the build provenance of the scanned digest (GitHub artifact
   # attestation, also pushed to the registry), signs it (Sigstore keyless
   # signing with the workflow's OIDC identity, `cosign`) and only then tags
-  # exactly that digest with the package's version (`X.Y.Z`; no `latest`:
-  # operators set the image by digest or version), so that the published
-  # image is the scanned one; before PyPI, so that a release on PyPI always
-  # has its image. Re-runs of failed jobs sign and tag the same digest
-  # again (no change); a version tag that points to another digest (e.g.,
-  # after "Re-run all jobs") fails the job, as published tags must not move
+  # exactly that digest with the package's version, as on PyPI (e.g.,
+  # `1.2.0` or `1.2.0rc1`; no `latest`: operators set the image by digest
+  # or version), so that the published image is the scanned one; after the
+  # distributions are attested and before PyPI, so that a release on PyPI
+  # always has its image, and an image tag is only published once all
+  # artifacts of the release are built. Re-runs of failed jobs sign the same
+  # digest again and leave its tag as it is; a version tag that points to
+  # another digest (e.g., after "Re-run all jobs") fails the job, as
+  # published tags must not move
   image:
     name: Release image
-    needs: [prepare, push, scan]
+    needs: [prepare, attest, push, scan]
     if: ${{ needs.prepare.outputs.image != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -393,6 +384,7 @@ jobs:
       # Before anything is attested or signed: only a missing tag or one of
       # this digest may be (re)tagged; other errors fail the step
       - name: Check version tag
+        id: tag
         run: |
           tag="${IMAGE}:${VERSION}"
           if manifest="$(docker buildx imagetools inspect "${tag}" \
@@ -403,6 +395,7 @@ jobs:
                   exit 1
               fi
               echo "::notice::${tag} points to ${DIGEST} already"
+              echo "exists=true" >> "${GITHUB_OUTPUT}"
           elif grep -qi "not found" "${RUNNER_TEMP}/inspect.err"; then
               echo "${tag} doesn't exist yet"
           else
@@ -423,8 +416,11 @@ jobs:
       - name: Sign image
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
       # The tag points to the checked, scanned and signed digest: a single
-      # source is copied as is
+      # source is copied as is. An existing tag of the digest (a re-run) is
+      # left as it is, also as Docker Hub's immutable tags refuse to push it
+      # again
       - name: Tag image
+        if: ${{ steps.tag.outputs.exists != 'true' }}
         run: |
           tag="${IMAGE}:${VERSION}"
           docker buildx imagetools create --tag "${tag}" "${IMAGE}@${DIGEST}"
