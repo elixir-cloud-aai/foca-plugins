@@ -8,28 +8,38 @@ decided by the gateway-neutral :py:mod:`.inputs`.
 
 Fields and items of the wrong type (e.g., `inputs` that is no list, or
 items that are no objects) are skipped and kept as they are, and a task
-whose `executors` or `volumes` is no list is not changed: the gateway app
-validates the task after the plugin and rejects it.
+whose `executors` is null or no list, or whose `volumes` is no list, is not
+changed: the gateway app validates the task after the plugin and rejects it.
 """
 
 from collections.abc import Sequence
 from typing import Any
 
-from foca_plugins.tes.data.crypt4gh.inputs import Crypt4ghInputs, InputError, within
+from foca_plugins.tes.data.crypt4gh.inputs import (
+    Crypt4ghInputs,
+    InputError,
+    normalize,
+    overlaps,
+)
 
 
-def malformed(task: dict[str, Any], *fields: str) -> bool:
+def malformed(task: dict[str, Any], *fields: str, nullable: Sequence[str] = ()) -> bool:
     """Tell whether a task has list fields of another type.
 
     Args:
         task: TES task.
         fields: Names of the list fields.
+        nullable: Names of the fields that may be null, which then count as
+            absent.
 
     Returns:
-        Whether one of the fields is present, not null and no list.
+        Whether one of the fields is present and no list (or null, if it
+        isn't nullable).
     """
     return any(
-        task.get(field) is not None and not isinstance(task[field], list)
+        field in task
+        and not isinstance(task[field], list)
+        and not (task[field] is None and field in nullable)
         for field in fields
     )
 
@@ -89,19 +99,36 @@ def check_paths(task: dict[str, Any], volume: str) -> None:
         volume: Path of the volume of the decrypted files.
 
     Raises:
-        InputError: An input, output or volume of the task is the volume or
-            inside it.
+        InputError: An input, output or volume of the task is the volume,
+            inside it or one of its parent directories (cf.
+            :py:func:`.inputs.overlaps`).
     """
     for field in ("inputs", "outputs"):
         for index, item in objects(task, field):
             path = item.get("path")
-            if isinstance(path, str) and within(path, volume):
+            if isinstance(path, str) and overlaps(path, volume):
                 raise InputError(
                     f"{field}[{index}]: path is reserved for decrypted files"
                 )
     for index, path in enumerate(items(task, "volumes")):
-        if isinstance(path, str) and within(path, volume):
+        if isinstance(path, str) and overlaps(path, volume):
             raise InputError(f"volumes[{index}]: path is reserved for decrypted files")
+
+
+def alias(value: Any, targets: dict[str, str]) -> Any:
+    """Get the decrypted file for an argument that names a Crypt4GH input.
+
+    Args:
+        value: Argument, stdin or output path.
+        targets: Path of the decrypted file for each Crypt4GH input.
+
+    Returns:
+        The path of the decrypted file if `value` is the absolute path of a
+        Crypt4GH input, in any spelling (e.g., `//in/a.c4gh`); else `value`.
+    """
+    if isinstance(value, str) and value.startswith("/"):
+        return targets.get(normalize(value), value)
+    return value
 
 
 def check_outputs(task: dict[str, Any], found: Crypt4ghInputs) -> None:
@@ -115,11 +142,17 @@ def check_outputs(task: dict[str, Any], found: Crypt4ghInputs) -> None:
         found: Crypt4GH files and keys among the task's inputs.
 
     Raises:
-        InputError: An output has the path of a Crypt4GH input.
+        InputError: An output has the path of a Crypt4GH input, also in
+            another spelling (e.g., `/in/./a.c4gh` for `/in/a.c4gh`).
     """
     encrypted = {file.path for file in found.files}
     for index, item in objects(task, "outputs"):
-        if item.get("path") in encrypted:
+        path = item.get("path")
+        if (
+            isinstance(path, str)
+            and path.startswith("/")
+            and normalize(path) in encrypted
+        ):
             raise InputError(
                 f"outputs[{index}]: path is that of a Crypt4GH input, which is"
                 " not changed"
@@ -162,6 +195,34 @@ def decryption_executor(
     return {"image": image, "command": arguments}
 
 
+def rewritten(
+    task: dict[str, Any], *, image: str, command: Sequence[str], volume: str
+) -> bool:
+    """Tell whether the plugin has added the decryption to a task already.
+
+    Args:
+        task: TES task.
+        image: Image of the decryption executor.
+        command: Command of the decryption script in the image.
+        volume: Path of the volume of the decrypted files.
+
+    Returns:
+        Whether the task has the volume and its first executor runs the
+        decryption command in the decryption image.
+    """
+    executors = items(task, "executors")
+    if not executors or not isinstance(executors[0], dict):
+        return False
+    first = executors[0]
+    args = first.get("command")
+    return (
+        volume in items(task, "volumes")
+        and first.get("image") == image
+        and isinstance(args, list)
+        and args[: len(command)] == list(command)
+    )
+
+
 def rewrite(
     task: dict[str, Any],
     found: Crypt4ghInputs,
@@ -183,12 +244,9 @@ def rewrite(
     for _, executor in objects(task, "executors"):
         args = executor.get("command")
         if isinstance(args, list):
-            executor["command"] = [
-                targets.get(arg, arg) if isinstance(arg, str) else arg for arg in args
-            ]
-        stdin = executor.get("stdin")
-        if isinstance(stdin, str) and stdin in targets:
-            executor["stdin"] = targets[stdin]
+            executor["command"] = [alias(arg, targets) for arg in args]
+        if "stdin" in executor:
+            executor["stdin"] = alias(executor["stdin"], targets)
     task["executors"] = [
         decryption_executor(found, image=image, command=command, volume=volume),
         *items(task, "executors"),

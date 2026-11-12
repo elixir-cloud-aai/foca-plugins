@@ -382,6 +382,60 @@ def test_fails_on_files_that_cant_be_removed(
     assert f"Can't remove {out / 'one'}" in caplog.text
 
 
+def test_fails_on_temporary_files_that_cant_be_removed(
+    tmp_path: Path,
+    alice: KeyPair,
+    bob: KeyPair,
+    encrypt_file: Encrypt,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A temporary file that can't be removed doesn't hide the error.
+
+    The earlier targets are removed all the same, and the script exits
+    with status 1.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        alice: Key pair of Alice.
+        bob: Key pair of Bob.
+        encrypt_file: Writes Crypt4GH files.
+        monkeypatch: Patches `Path.unlink`.
+        caplog: Captured logs.
+    """
+    one = encrypt_file(tmp_path / "one.c4gh", b"one", alice)
+    two = encrypt_file(tmp_path / "two.c4gh", b"two", bob)
+    out = tmp_path / "out"
+    unlink = Path.unlink
+
+    def refuse_temporary(path: Path, missing_ok: bool = False) -> None:
+        """Refuse to remove temporary files.
+
+        Args:
+            path: Path.
+            missing_ok: Whether a missing file is fine.
+
+        Raises:
+            PermissionError: The path is a temporary file.
+        """
+        if path.name.startswith("."):
+            raise PermissionError(os.strerror(13))
+        unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse_temporary)
+    status = decrypt.main(
+        [
+            *("--key", str(alice.secret)),
+            *("--file", str(one), str(out / "one")),
+            *("--file", str(two), str(out / "two")),
+        ]
+    )
+    assert status == 1
+    assert not (out / "one").exists()
+    assert f"Can't decrypt {two}" in caplog.text
+    assert "Can't remove temporary file" in caplog.text
+
+
 def test_fails_on_directories_that_cant_be_created(
     tmp_path: Path, alice: KeyPair, encrypt_file: Encrypt
 ) -> None:

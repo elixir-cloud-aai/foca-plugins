@@ -70,6 +70,19 @@ def decrypted_name(path: str, suffixes: Iterable[str]) -> str | None:
     return None
 
 
+def normalize(path: str) -> str:
+    """Normalize an absolute path, as the container's file system reads it.
+
+    Args:
+        path: Absolute path.
+
+    Returns:
+        The path without `.`, `..` (resolved lexically), repeated and
+        trailing slashes, e.g., `/in/a` for `//in/./x/../a/`.
+    """
+    return "/" + posixpath.normpath(path).lstrip("/")
+
+
 def within(path: str, directory: str) -> bool:
     """Tell whether a path is a directory or inside it.
 
@@ -82,11 +95,24 @@ def within(path: str, directory: str) -> bool:
         (e.g., `/vol/x/../crypt4gh` or `//vol/crypt4gh` for `/vol/crypt4gh`),
         or as it is (as `..` after a symbolic link leads elsewhere).
     """
-    normalized = "/" + posixpath.normpath(path).lstrip("/")
     return any(
         PurePosixPath(candidate).is_relative_to(PurePosixPath(directory))
-        for candidate in (path, normalized)
+        for candidate in (path, normalize(path))
     )
+
+
+def overlaps(path: str, directory: str) -> bool:
+    """Tell whether a path is a directory, inside it, or one of its parents.
+
+    Args:
+        path: Absolute path.
+        directory: Absolute, normalized path of the directory.
+
+    Returns:
+        Whether `path` is `directory`, below it (cf. :py:func:`within`) or
+        above it (normalized), so that mounting either changes the other.
+    """
+    return within(path, directory) or within(directory, normalize(path))
 
 
 def classify(
@@ -130,7 +156,7 @@ def classify(
             continue
         # Normalized, so that the paths of executors and outputs that name
         # the input are recognized by plain comparison
-        if "/" + posixpath.normpath(path).lstrip("/") != path:
+        if normalize(path) != path:
             raise InputError(f"{field}[{index}]: path must be absolute and normalized")
         if is_key:
             keys.append(path)

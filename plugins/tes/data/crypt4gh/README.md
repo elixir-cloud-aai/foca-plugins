@@ -31,22 +31,29 @@ Crypt4GH middleware of proTES.
    `encrypted_suffixes` (`.c4gh`) and `key_suffixes` (`.sec`). The gateway
    can't read the inputs, so their names decide; the decryption executor
    checks the files when the task runs.
-2. Leaves tasks without Crypt4GH inputs as they are.
+2. Leaves tasks without Crypt4GH inputs as they are, and tasks that it
+   changed already (they have `volume` and, as their first executor, the
+   decryption executor), so that a task sent through the gateway twice gets
+   one decryption executor.
 3. Otherwise, it rejects the task with `422 Unprocessable Content` if:
    - it has no secret key among its inputs;
-   - a Crypt4GH input or key has no absolute path;
+   - a Crypt4GH input or key has no absolute, normalized path (e.g.,
+     `/in/./reads.fq.c4gh` or `//in/reads.fq.c4gh`);
    - a Crypt4GH input has no name besides its suffix (e.g., `/in/.c4gh`),
      or two decrypt to the same name (e.g., `/a/x.c4gh` and `/b/x.c4gh`);
    - an input, output or volume of the task is the `volume` of the
-     decrypted files or inside it;
-   - an output has the path of a Crypt4GH input.
+     decrypted files, inside it or one of its parent directories (e.g.,
+     `/vol` or `/`), also in another spelling (e.g., `/vol/x/../crypt4gh`);
+   - an output has the path of a Crypt4GH input, also in another spelling.
 4. Adds `volume` (`/vol/crypt4gh`) to the task's `volumes`, and, as the
    task's first executor, the decryption executor (`image`, `command`), which
    decrypts each Crypt4GH input to `<volume>/<name without suffix>`, e.g.,
    `/in/reads.fq.c4gh` to `/vol/crypt4gh/reads.fq`, with any of the keys.
 5. Changes the arguments of the task's executors (`command`, and `stdin`)
-   that are the path of a Crypt4GH input to the path of its decrypted file.
-   Only whole arguments are changed: an argument such as
+   that are the path of a Crypt4GH input, in any spelling of the absolute
+   path (e.g., `/in/./reads.fq.c4gh`), to the path of its decrypted file.
+   Only whole, absolute arguments are changed: a relative path, or an
+   argument such as
    `--in=/in/reads.fq.c4gh` keeps the encrypted file, as do `env` and
    `workdir`.
 
@@ -73,13 +80,18 @@ inputs (e.g., a reference genome) are left where they are.
 The executor runs `crypt4gh-decrypt` (`decrypt.py` of the package) in the
 decryption image. It reads the keys (Crypt4GH or OpenSSH ed25519 secret
 keys, **without passphrase**), then decrypts each file with any of them,
-writing it to a temporary file next to its target first; decrypted files
+writing it to a temporary file next to its target first. Decrypted files
 are readable by all (0644, their directory 0755 where the executor may
-change it), as the task's next executors may run as other users. Inputs
+change it), deliberately: the task's next executors may run as other users
+than the decryption executor (e.g., images with a non-root user), and the
+volume belongs to the task alone. Inputs
 are only read, so they may be mounted read-only. If a key can't be read or
 a file can't be decrypted (e.g., no key fits, or it is no Crypt4GH file),
 the executor removes the files it decrypted and exits with status 1, so
-that the task fails before its own executors run.
+that the task fails before its own executors run. Existing files at the
+targets are replaced, not refused, so that a restarted executor (e.g., a
+Kubernetes pod) runs again: the volume belongs to one task, whose
+executors run once each, in order.
 
 ### The decryption image
 
@@ -132,7 +144,7 @@ and `plugins.pipeline`.
 | `config.command` | 1 to 16 strings | `["crypt4gh-decrypt"]` | command of the decryption script in the image; the plugin appends its arguments |
 | `config.volume` | absolute, normalized path below `/` | `/vol/crypt4gh` | volume of the decrypted files; tasks may not use it or paths in it |
 | `config.encrypted_suffixes` | 1 to 16 suffixes (a dot and 1 to 32 characters, no `/` or spaces) | `[".c4gh"]` | suffixes of the names of Crypt4GH inputs; the longest that matches is removed from the decrypted file's name |
-| `config.key_suffixes` | as `encrypted_suffixes`, but none of them | `[".sec"]` | suffixes of the names of secret keys among the inputs |
+| `config.key_suffixes` | as `encrypted_suffixes`; none may end with one of them or the other way round (e.g., `.key.c4gh` and `.c4gh`) | `[".sec"]` | suffixes of the names of secret keys among the inputs |
 
 The plugin has no parameters.
 

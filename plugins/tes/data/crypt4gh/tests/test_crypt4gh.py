@@ -157,6 +157,8 @@ def test_settings_have_defaults() -> None:
         {"image": IMAGE, "encrypted_suffixes": ["c4gh"]},
         {"image": IMAGE, "key_suffixes": [".a/b"]},
         {"image": IMAGE, "key_suffixes": [".c4gh"]},
+        {"image": IMAGE, "key_suffixes": [".key.c4gh"]},
+        {"image": IMAGE, "encrypted_suffixes": [".x.sec"]},
         {"image": IMAGE, "other": "value"},
     ],
 )
@@ -292,6 +294,22 @@ def test_on_request_keeps_tasks_without_crypt4gh_inputs(
             {"volumes": ["/scratch", "/vol/crypt4gh"]},
             r"^volumes\[1\]: path is reserved for decrypted files$",
         ),
+        (
+            {"volumes": ["/vol"]},
+            r"^volumes\[0\]: path is reserved for decrypted files$",
+        ),
+        (
+            {"outputs": [{"url": "s3://b/o", "path": "/"}]},
+            r"^outputs\[0\]: path is reserved for decrypted files$",
+        ),
+        (
+            {"outputs": [{"url": "s3://b/o", "path": "/in/./reads.fq.c4gh"}]},
+            r"^outputs\[0\]: path is that of a Crypt4GH input",
+        ),
+        (
+            {"outputs": [{"url": "s3://b/o", "path": "//in/reads.fq.c4gh"}]},
+            r"^outputs\[0\]: path is that of a Crypt4GH input",
+        ),
     ],
 )
 def test_on_request_rejects(
@@ -331,22 +349,13 @@ def test_on_request_refuses_other_payloads(plugin: Crypt4gh) -> None:
         plugin.on_request(make_inbound([]), make_context())
 
 
-@pytest.mark.parametrize(
-    "task",
-    [
-        {"inputs": "x", "executors": "y", "outputs": 1, "volumes": {}},
-        {"inputs": ["x", None], "executors": [1]},
-    ],
-)
-def test_on_request_takes_malformed_fields_as_absent(
-    plugin: Crypt4gh, task: dict[str, Any]
-) -> None:
-    """Fields of the wrong type don't apply; the app validates them later.
+def test_on_request_takes_malformed_inputs_as_absent(plugin: Crypt4gh) -> None:
+    """Inputs that are no list have no Crypt4GH files; the task is unchanged.
 
     Args:
         plugin: Plugin.
-        task: Task without Crypt4GH inputs, with fields of the wrong type.
     """
+    task = make_task(inputs="x", outputs=1, volumes={})
     request = make_inbound(task)
     plugin.on_request(request, make_context())
     assert request.payload == task
@@ -359,7 +368,7 @@ def test_on_request_keeps_malformed_items(plugin: Crypt4gh) -> None:
         plugin: Plugin.
     """
     task = make_task(
-        outputs=["o"],
+        outputs=["o", {"url": "s3://b/o", "path": ["/in/reads.fq.c4gh"]}],
         volumes=None,
         executors=["e", {"image": "a", "command": [1, "/in/reads.fq.c4gh"]}],
     )
@@ -372,10 +381,13 @@ def test_on_request_keeps_malformed_items(plugin: Crypt4gh) -> None:
         {"image": "a", "command": [1, "/vol/crypt4gh/reads.fq"]},
     ]
     assert payload["volumes"] == [VOLUME]
-    assert payload["outputs"] == ["o"]
+    assert payload["outputs"] == task["outputs"]
 
 
-@pytest.mark.parametrize("fields", [{"executors": "e"}, {"volumes": "v"}])
+@pytest.mark.parametrize(
+    "fields",
+    [{"executors": "e"}, {"executors": None}, {"volumes": "v"}, {"volumes": {}}],
+)
 def test_on_request_keeps_tasks_with_malformed_lists(
     plugin: Crypt4gh, fields: dict[str, Any]
 ) -> None:
@@ -388,6 +400,46 @@ def test_on_request_keeps_tasks_with_malformed_lists(
     request = make_inbound(make_task(**fields))
     plugin.on_request(request, make_context())
     assert request.payload == make_task(**fields)
+
+
+def test_on_request_changes_aliases_of_inputs(plugin: Crypt4gh) -> None:
+    """Arguments and stdin that name an input in another spelling are changed.
+
+    Args:
+        plugin: Plugin.
+    """
+    task = make_task(
+        executors=[
+            {
+                "image": "a",
+                "command": ["cat", "/in/./reads.fq.c4gh", "//in/reads.fq.c4gh"],
+                "stdin": "/in/x/../reads.fq.c4gh",
+            },
+            {"image": "b", "command": ["ls", "in/reads.fq.c4gh"]},
+        ]
+    )
+    request = make_inbound(task)
+    plugin.on_request(request, make_context())
+    first, second = request.payload["executors"][1:]
+    assert first["command"] == ["cat", *(["/vol/crypt4gh/reads.fq"] * 2)]
+    assert first["stdin"] == "/vol/crypt4gh/reads.fq"
+    assert second["command"] == ["ls", "in/reads.fq.c4gh"]
+
+
+def test_on_request_is_idempotent(plugin: Crypt4gh) -> None:
+    """A task that the plugin changed already is left as it is.
+
+    Args:
+        plugin: Plugin.
+    """
+    request = make_inbound(make_task())
+    plugin.on_request(request, make_context())
+    once = request.payload
+    again = make_inbound(once)
+    ctx = make_context()
+    plugin.on_request(again, ctx)
+    assert again.payload == once
+    assert ctx.annotations["encrypted_inputs"] == 1
 
 
 def test_plugin_meets_contract() -> None:

@@ -105,7 +105,10 @@ def decrypt_file(source: Path, target: Path, keys: Sequence[bytes]) -> None:
         raise DecryptionError(f"Can't decrypt {source}: {error}") from error
     finally:
         if part is not None:
-            part.unlink(missing_ok=True)
+            try:
+                part.unlink(missing_ok=True)
+            except OSError as error:
+                logger.warning("Can't remove temporary file %s: %s", part, error)
 
 
 def open_directories(targets: Sequence[Path]) -> None:

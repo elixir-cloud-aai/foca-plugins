@@ -34,6 +34,7 @@ from foca_plugins.tes.data.crypt4gh.task import (
     input_paths,
     malformed,
     rewrite,
+    rewritten,
 )
 
 Suffix = Annotated[str, Field(pattern=r"^\.[^/\s]{1,32}$")]
@@ -100,10 +101,19 @@ class Crypt4ghConfig(BaseModel):
             The settings.
 
         Raises:
-            ValueError: A suffix is in both lists.
+            ValueError: A suffix of Crypt4GH files ends with one of keys, or
+                the other way round (e.g., `.key.c4gh` and `.c4gh`), so that
+                a file name would have both.
         """
-        if set(self.encrypted_suffixes) & set(self.key_suffixes):
-            raise ValueError("encrypted_suffixes and key_suffixes must differ")
+        if any(
+            a.endswith(b) or b.endswith(a)
+            for a in self.encrypted_suffixes
+            for b in self.key_suffixes
+        ):
+            raise ValueError(
+                "encrypted_suffixes and key_suffixes must differ and not end"
+                " with one another"
+            )
         return self
 
 
@@ -167,7 +177,17 @@ class Crypt4gh(Plugin[Crypt4ghConfig, EmptyModel]):
             ctx.record("encrypted_inputs", len(found.files))
             ctx.record("key_inputs", len(found.keys))
             # Fields of the wrong type are left for the app to reject
-            if not found.files or malformed(task, "executors", "volumes"):
+            if not found.files or malformed(
+                task, "executors", "volumes", nullable=("volumes",)
+            ):
+                return
+            # A task changed already (e.g., sent through the gateway twice)
+            if rewritten(
+                task,
+                image=settings.image,
+                command=settings.command,
+                volume=settings.volume,
+            ):
                 return
             check_paths(task, settings.volume)
             check_outputs(task, found)
