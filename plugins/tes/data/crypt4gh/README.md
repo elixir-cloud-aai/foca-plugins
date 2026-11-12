@@ -361,8 +361,9 @@ any server. It checks that:
 Funnel keeps the tasks' working directories in the test, so that it can
 check the volume on the host. TESK refuses tasks with `ignore_error: true`,
 so `teardown_on_error` is tested with Funnel only, and the test has no TESK
-variant. It needs Docker with Compose, uv, curl and jq (without them, it
-exits with status 2 before starting anything), but no credentials:
+variant. It needs Docker with Compose, uv, curl and jq (without them, or
+with a bad work directory, it exits with status 2 before starting
+anything), but no credentials:
 
 ```bash
 plugins/tes/data/crypt4gh/e2e/check.sh

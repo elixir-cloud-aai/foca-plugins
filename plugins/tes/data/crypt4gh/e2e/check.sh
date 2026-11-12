@@ -32,17 +32,24 @@
 # `/tmp/foca-plugins-e2e`; created by the test, and removed when it ends;
 # an existing directory is reused only if an earlier run created it),
 # `E2E_PORT`, the port of proTES on the host's loopback interface (default
-# 18080; also names the Compose project, so that runs with different ports
-# and work directories don't interfere), and `E2E_WAIT`, the seconds to
-# wait for each task (default 180). Exits with status 2 if a tool or
-# Docker is missing, before it starts anything.
+# 18080; also names the Compose project, so that runs of the same checkout
+# with different ports and work directories don't interfere; runs of
+# different checkouts do, as they share the tags of the images that they
+# build), and `E2E_WAIT`, the seconds to wait for each task (default 180).
+# Exits with status 2, before it starts anything, if a tool or Docker is
+# missing, or if the work directory is not one that it may use.
 
 set -euo pipefail
 
 e2e="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 plugin="$(dirname "${e2e}")"
 root="$(cd "${plugin}/../../../.." && pwd)"
-export E2E_WORK_DIR="${E2E_WORK_DIR:-/tmp/foca-plugins-e2e}"
+E2E_WORK_DIR="${E2E_WORK_DIR:-/tmp/foca-plugins-e2e}"
+# Without trailing slashes, as Docker reports the mount sources
+while [[ "${E2E_WORK_DIR}" == ?*/ ]]; do
+  E2E_WORK_DIR="${E2E_WORK_DIR%/}"
+done
+export E2E_WORK_DIR
 export E2E_PORT="${E2E_PORT:-18080}"
 export COMPOSE_FILE="${e2e}/compose.yaml"
 export COMPOSE_PROJECT_NAME="foca-plugins-e2e-${E2E_PORT}"
@@ -57,14 +64,23 @@ image='alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b
 # The content of the Crypt4GH file
 plaintext="hello crypt4gh"
 
+# An absolute path below `/`, without `:` (which would break the volume
+# specifications of Docker)
 case "${E2E_WORK_DIR}" in
+  *:*)
+    echo "E2E_WORK_DIR must not contain ':', not ${E2E_WORK_DIR}" >&2
+    exit 2
+    ;;
   /*[!/.]*) ;;
   *)
     echo "E2E_WORK_DIR must be an absolute path below /, not ${E2E_WORK_DIR}" >&2
     exit 2
     ;;
 esac
-if [[ -e "${E2E_WORK_DIR}" && ! -f "${marker}" ]]; then
+# An existing work directory only if an earlier run made it: the runner's
+# own, no symbolic link, with the marker
+if [[ -L "${E2E_WORK_DIR}" ]] ||
+  [[ -e "${E2E_WORK_DIR}" && (! -O "${E2E_WORK_DIR}" || ! -f "${marker}") ]]; then
   echo "E2E_WORK_DIR ${E2E_WORK_DIR} exists, but wasn't made by this test" >&2
   exit 2
 fi
@@ -100,10 +116,13 @@ remove_work_dir() {
 # The task containers of this run (Funnel's, with the label of `funnel.yaml`
 # and mounts in this run's work directory)
 task_containers() {
-  local id
+  local id mounts
   for id in $(docker ps -aq --filter label=foca-plugins-e2e=task); do
-    docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "${id}" |
-      grep -qF "${E2E_WORK_DIR}/" && echo "${id}"
+    mounts="$(docker inspect --format \
+      '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "${id}")" || continue
+    # Mount sources that start with the work directory
+    awk -v dir="${E2E_WORK_DIR}/" 'index($0, dir) == 1 { found = 1 }
+      END { exit !found }' <<< "${mounts}" && echo "${id}"
   done
 }
 

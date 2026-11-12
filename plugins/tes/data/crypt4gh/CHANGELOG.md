@@ -27,12 +27,6 @@ entry with its issue and pull request numbers (see "Releasing" in the docs).
   release workflow; the image no longer contains pip, which the executor
   doesn't need (#69, #74).
 
-### Documentation
-
-- Document that Funnel 0.11.14 ends tasks with `EXECUTOR_ERROR` after a
-  failed executor with `teardown_on_error`, as the end-to-end test finds
-  (#68).
-
 ### Maintenance
 
 - Add an end-to-end test (`e2e/check.sh`, CI job `e2e`): proTES with the
