@@ -20,14 +20,13 @@ The plugin API is documented in FOCA's `docs/plugins.md`
 (https://foca.readthedocs.io/en/latest/plugins/).
 """
 
-from pathlib import PurePosixPath
 from typing import Annotated, Any, Self
 
 from foca.plugins import Context, InboundRequest, NotApplicable, Plugin, Rejected
 from foca.plugins.base import EmptyModel
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from foca_plugins.tes.data.crypt4gh.inputs import InputError, classify
+from foca_plugins.tes.data.crypt4gh.inputs import InputError, classify, normalize
 from foca_plugins.tes.data.crypt4gh.task import (
     check_outputs,
     check_paths,
@@ -83,13 +82,8 @@ class Crypt4ghConfig(BaseModel):
             ValueError: The path is not absolute, not normalized (e.g., with
                 `.`, `..`, `//` or a trailing slash), or `/`.
         """
-        path = PurePosixPath(value)
-        if (
-            not path.is_absolute()
-            or str(path) != value
-            or ".." in path.parts
-            or value == "/"
-        ):
+        # `normalize`, not `PurePosixPath`, which keeps a leading `//`
+        if not value.startswith("/") or normalize(value) != value or value == "/":
             raise ValueError("must be an absolute, normalized path below /")
         return value
 
@@ -168,6 +162,11 @@ class Crypt4gh(Plugin[Crypt4ghConfig, EmptyModel]):
         if not isinstance(task, dict):
             raise NotApplicable("payload is no task")
         settings = self.settings
+        # Fields of the wrong type are left for the app to reject
+        if malformed(
+            task, "executors", "volumes", nullable=("volumes",)
+        ) or not task.get("executors"):
+            return
         try:
             found = classify(
                 input_paths(task),
@@ -176,12 +175,7 @@ class Crypt4gh(Plugin[Crypt4ghConfig, EmptyModel]):
             )
             ctx.record("encrypted_inputs", len(found.files))
             ctx.record("key_inputs", len(found.keys))
-            # Fields of the wrong type are left for the app to reject
-            if (
-                not found.files
-                or malformed(task, "executors", "volumes", nullable=("volumes",))
-                or not task.get("executors")
-            ):
+            if not found.files:
                 return
             # A task changed already (e.g., sent through the gateway twice)
             # is checked, except for the volume that the plugin added
@@ -196,12 +190,11 @@ class Crypt4gh(Plugin[Crypt4ghConfig, EmptyModel]):
             check_outputs(task, found)
         except InputError as error:
             raise Rejected(str(error), 422) from error
-        if own is not None:
-            return
         rewrite(
             task,
             found,
             image=settings.image,
             command=settings.command,
             volume=settings.volume,
+            again=own is not None,
         )

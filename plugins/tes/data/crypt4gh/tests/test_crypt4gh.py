@@ -7,6 +7,7 @@ loads the plugin through its installed entry point, as gateway apps do.
 """
 
 from collections.abc import Iterator
+import copy
 from importlib.metadata import entry_points
 import time
 from typing import Any
@@ -151,6 +152,7 @@ def test_settings_have_defaults() -> None:
         {"image": IMAGE, "volume": "/"},
         {"image": IMAGE, "volume": "/vol/"},
         {"image": IMAGE, "volume": "/vol//c"},
+        {"image": IMAGE, "volume": "//vol/c"},
         {"image": IMAGE, "volume": "/vol/./c"},
         {"image": IMAGE, "volume": "/vol/../c"},
         {"image": IMAGE, "encrypted_suffixes": []},
@@ -596,12 +598,61 @@ def test_on_request_is_idempotent(plugin: Crypt4gh) -> None:
     """
     request = make_inbound(make_task())
     plugin.on_request(request, make_context())
-    once = request.payload
-    again = make_inbound(once)
+    once = copy.deepcopy(request.payload)
+    again = make_inbound(copy.deepcopy(once))
     ctx = make_context()
     plugin.on_request(again, ctx)
     assert again.payload == once
     assert ctx.annotations["encrypted_inputs"] == 1
+
+
+def test_on_request_changes_arguments_of_rewritten_tasks(plugin: Crypt4gh) -> None:
+    """Executors of a changed task that still name a Crypt4GH input are changed.
+
+    Args:
+        plugin: Plugin.
+    """
+    request = make_inbound(make_task())
+    plugin.on_request(request, make_context())
+    task = copy.deepcopy(request.payload)
+    task["executors"].append(
+        {
+            "image": "b",
+            "command": ["cat", "/in/reads.fq.c4gh"],
+            "stdin": "/in/reads.fq.c4gh",
+        }
+    )
+    again = make_inbound(task)
+    plugin.on_request(again, make_context())
+    executors = again.payload["executors"]
+    assert len(executors) == 3
+    assert executors[0] == request.payload["executors"][0]
+    assert executors[2]["command"] == ["cat", "/vol/crypt4gh/reads.fq"]
+    assert executors[2]["stdin"] == "/vol/crypt4gh/reads.fq"
+    assert again.payload["volumes"] == [VOLUME]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"executors": None},
+        {"executors": []},
+        {"volumes": "v"},
+    ],
+)
+def test_on_request_keeps_malformed_tasks_with_bad_inputs(
+    plugin: Crypt4gh, fields: dict[str, Any]
+) -> None:
+    """Malformed tasks are left for the app, even if their inputs are bad too.
+
+    Args:
+        plugin: Plugin.
+        fields: Field of the wrong type.
+    """
+    inputs = [{"url": "s3://b/a", "path": "/in/./a.c4gh"}]
+    request = make_inbound(make_task(inputs=inputs, **fields))
+    plugin.on_request(request, make_context())
+    assert request.payload == make_task(inputs=inputs, **fields)
 
 
 def test_plugin_meets_contract() -> None:

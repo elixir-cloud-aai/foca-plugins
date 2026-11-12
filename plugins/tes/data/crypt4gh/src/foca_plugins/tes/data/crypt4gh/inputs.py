@@ -146,6 +146,7 @@ def classify(
     keys_suffixes = tuple(key_suffixes)
     files: list[EncryptedFile] = []
     keys: list[str] = []
+    unnormalized: list[int] = []
     names: dict[str, int] = {}
     for index, path in enumerate(paths):
         if path is None:
@@ -155,12 +156,15 @@ def classify(
         if name is None and not is_key:
             continue
         # Normalized, so that the paths of executors and outputs that name
-        # the input are recognized by plain comparison
-        if normalize(path) != path:
-            raise InputError(f"{field}[{index}]: path must be absolute and normalized")
+        # the input are recognized by plain comparison; keys only matter if
+        # there are Crypt4GH files
         if is_key:
             keys.append(path)
+            if normalize(path) != path:
+                unnormalized.append(index)
             continue
+        if normalize(path) != path:
+            raise InputError(f"{field}[{index}]: path must be absolute and normalized")
         if name is None or name in ("", ".", ".."):
             raise InputError(
                 f"{field}[{index}]: Crypt4GH file needs a name besides its suffix"
@@ -172,6 +176,10 @@ def classify(
             )
         names[name] = index
         files.append(EncryptedFile(index=index, path=path, name=name))
+    if files and unnormalized:
+        raise InputError(
+            f"{field}[{unnormalized[0]}]: path must be absolute and normalized"
+        )
     if files and not keys:
         raise InputError(
             f"{field}: Crypt4GH files need a secret key among the inputs (a file"

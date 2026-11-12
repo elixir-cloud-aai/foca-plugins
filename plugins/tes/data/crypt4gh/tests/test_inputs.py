@@ -91,6 +91,7 @@ def test_classify_finds_files_and_keys() -> None:
 def test_classify_without_crypt4gh_files() -> None:
     """Without Crypt4GH files, keys are found and nothing is required."""
     assert find(["/in/a.txt", "/k/a.sec"]) == Crypt4ghInputs(keys=("/k/a.sec",))
+    assert find(["k/./a.sec"]) == Crypt4ghInputs(keys=("k/./a.sec",))
     assert find([]) == Crypt4ghInputs()
 
 
@@ -101,6 +102,7 @@ def test_classify_without_crypt4gh_files() -> None:
         (["/in/a.c4gh", "k/a.sec"], r"^inputs\[1\]: path must be absolute"),
         (["/in/./a.c4gh", "/k/a.sec"], r"^inputs\[0\]: path must be absolute"),
         (["/in/a.c4gh", "//k/a.sec"], r"^inputs\[1\]: path must be absolute"),
+        (["/k/./a.sec", "/in/a.c4gh"], r"^inputs\[0\]: path must be absolute"),
         (["/k/a.sec", "/in/.c4gh"], r"^inputs\[1\]: Crypt4GH file needs a name"),
         (["/k/a.sec", "/in/...c4gh"], r"^inputs\[1\]: Crypt4GH file needs a name"),
         (["/k/a.sec", "/in/..c4gh"], r"^inputs\[1\]: Crypt4GH file needs a name"),

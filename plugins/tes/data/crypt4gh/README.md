@@ -26,22 +26,24 @@ Crypt4GH middleware of proTES.
 
 `request`:
 
-1. Finds the Crypt4GH files and the secret keys among the task's `inputs`
+1. Leaves tasks without executors and tasks whose `executors` or
+   `volumes` have the wrong type as they are, without checking them: the
+   gateway app rejects them.
+2. Finds the Crypt4GH files and the secret keys among the task's `inputs`
    (files only, not `type: DIRECTORY`; a null `type` is a file), by the
    suffixes of their `path`s:
    `encrypted_suffixes` (`.c4gh`) and `key_suffixes` (`.sec`). The gateway
    can't read the inputs, so their names decide; the decryption executor
    checks the files when the task runs.
-2. Leaves tasks without Crypt4GH inputs as they are, as well as tasks
-   without executors and tasks whose `executors` or `volumes` have the
-   wrong type, which the gateway app rejects. Tasks that it changed already
-   (they have `volume` once and, as their first executor, exactly the
-   decryption executor that it would add) are checked as in step 3, except
-   for that volume, but not changed again, so that a task sent through the
-   gateway twice gets one decryption executor. This holds for gateways with
+3. Leaves tasks without Crypt4GH inputs as they are, even if they have
+   keys. Tasks that it changed already (they have `volume` once and, as
+   their first executor, exactly the decryption executor that it would add)
+   are checked as in step 4, except for that volume, and only the arguments
+   of their other executors are changed (step 6), so that a task sent
+   through the gateway twice gets one decryption executor. This holds for gateways with
    the same `image`, `command` and `volume` only: chain gateways with this
    plugin only if their settings are the same.
-3. Otherwise, it rejects the task with `422 Unprocessable Content` if:
+4. Otherwise, it rejects the task with `422 Unprocessable Content` if:
    - it has no secret key among its inputs;
    - a Crypt4GH input or key has no absolute, normalized path (e.g.,
      `/in/./reads.fq.c4gh` or `//in/reads.fq.c4gh`), or another input, an
@@ -55,11 +57,14 @@ Crypt4GH middleware of proTES.
      counts (e.g., `/` for `/v*/crypt4gh/*`);
    - an output has the path of a Crypt4GH input, also in another spelling,
      or has wildcards that match one (e.g., `/in/*.c4gh`).
-4. Adds `volume` (`/vol/crypt4gh`) to the task's `volumes`, and, as the
+5. Adds `volume` (`/vol/crypt4gh`) to the task's `volumes`, and, as the
    task's first executor, the decryption executor (`image`, `command`), which
    decrypts each Crypt4GH input to `<volume>/<name without suffix>`, e.g.,
    `/in/reads.fq.c4gh` to `/vol/crypt4gh/reads.fq`, with any of the keys.
-5. Changes the arguments of the task's executors (`command`, and `stdin`)
+   The paths are arguments of the executor, so a task's Crypt4GH inputs
+   and keys are bounded by the argument limit of the backend's nodes
+   (usually 2 MiB in all, i.e., thousands of paths).
+6. Changes the arguments of the task's executors (`command`, and `stdin`)
    that are the path of a Crypt4GH input, in any spelling of the absolute
    path (e.g., `/in/./reads.fq.c4gh`), to the path of its decrypted file.
    Only whole, absolute arguments are changed: a relative path, or an

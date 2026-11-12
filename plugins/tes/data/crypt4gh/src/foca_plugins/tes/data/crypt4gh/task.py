@@ -280,6 +280,7 @@ def rewrite(
     image: str,
     command: Sequence[str],
     volume: str,
+    again: bool = False,
 ) -> None:
     """Add the decryption to a task, in place.
 
@@ -289,14 +290,21 @@ def rewrite(
         image: Image of the decryption executor.
         command: Command of the decryption script in the image.
         volume: Path of the volume of the decrypted files.
+        again: Whether the task has the decryption already (cf.
+            :py:func:`rewritten`); then only the arguments of the executors
+            after the decryption executor are changed.
     """
     targets = {file.path: target(volume, file.name) for file in found.files}
-    for _, executor in objects(task, "executors"):
+    for index, executor in objects(task, "executors"):
+        if again and index == 0:
+            continue
         args = executor.get("command")
         if isinstance(args, list):
             executor["command"] = [alias(arg, targets) for arg in args]
         if "stdin" in executor:
             executor["stdin"] = alias(executor["stdin"], targets)
+    if again:
+        return
     task["executors"] = [
         decryption_executor(found, image=image, command=command, volume=volume),
         *items(task, "executors"),
