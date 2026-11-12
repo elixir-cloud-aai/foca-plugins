@@ -1,9 +1,14 @@
 # Image of the decryption executor of `tes.data.crypt4gh`: Python, the
 # `crypt4gh` package and the decryption script (`decrypt.py` of the plugin's
-# package) as `crypt4gh-decrypt`. Build it from the plugin's directory, the
-# build context (only the files of `.dockerignore`'s allowlist go into it):
+# package) as `crypt4gh-decrypt`. Build it with the plugin's directory as
+# the build context (only the files of `.dockerignore`'s allowlist go into
+# it), e.g., from the repository root:
 #
-#   docker build -f image/Dockerfile -t crypt4gh-decrypt plugins/tes/data/crypt4gh
+#   docker build -f plugins/tes/data/crypt4gh/image/Dockerfile \
+#     -t crypt4gh-decrypt plugins/tes/data/crypt4gh
+#
+# The release workflow publishes it with each release of the plugin, as
+# `elixircloud/foca-plugin-tes-data-crypt4gh-decrypt:<version>`.
 #
 # The successor of the image of `protes-middleware-crypt4gh`
 
@@ -29,10 +34,15 @@ RUN apt-get update --error-on=any && \
     rm -rf /var/lib/apt/lists/*
 
 # `crypt4gh` and its dependencies, as compiled in `requirements.txt` with
-# their hashes, from wheels only
+# their hashes, from wheels only; then pip is removed, which the executor
+# doesn't need, so that the vulnerabilities of pip and of the packages that
+# it vendors (e.g., `urllib3`), which the base image's pip has until upstream
+# rebuilds it, aren't in the image (the scans in CI and in the release
+# workflow fail on fixable ones)
 RUN --mount=type=bind,source=image/requirements.txt,target=/tmp/requirements.txt \
     pip install --no-cache-dir --require-hashes --only-binary :all: \
-        -r /tmp/requirements.txt
+        -r /tmp/requirements.txt && \
+    pip uninstall --yes pip
 
 COPY --chmod=0755 src/foca_plugins/tes/data/crypt4gh/decrypt.py /usr/local/bin/crypt4gh-decrypt
 

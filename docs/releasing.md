@@ -3,15 +3,21 @@
 !!! warning "Releases can't be changed"
 
     Tags, published PyPI files and GitHub releases can't be changed
-    afterwards. Dry-run changes of the release workflow end to end in a
-    fork, on a test tag, publishing to TestPyPI, before the next release.
+    afterwards, and the workflow never moves published image tags.
+    Dry-run changes of the release workflow end to end in a fork, on a test
+    tag, publishing to TestPyPI, before the next release.
 
 Every package is released on its own, from `main`, by pushing its tag; the
 release workflow does the rest. There are no manual steps after the tag:
 **Re-run failed jobs** completes a partial release, with the distributions
-built by the first attempt. Never use **Re-run all jobs**: it builds again,
-and the sdists aren't reproducible (the wheels are), so PyPI and the GitHub
-release could get different files.
+(and the image digest) built by the first attempt. Never use **Re-run all
+jobs**: it builds again, and the sdists aren't reproducible (the wheels
+are), so PyPI and the GitHub release could get different files (and a
+package's image a new digest, whose tagging the workflow refuses). One
+exception: if only **Scan release image** failed, on a finding that a
+rebuild fixes (e.g., a Debian update published after the build), nothing is
+published yet, and **Re-run all jobs** builds and scans a new digest
+(re-running the failed jobs would scan the same digest again).
 
 ## Versions
 
@@ -147,6 +153,16 @@ after the other: add the pending publisher for one distribution, push its
 tag and let the release finish, then add it for the next one. Once a
 project exists, the same publisher can serve any number of projects.
 
+Packages with an image (see [Images](#images)) also need its Docker Hub
+repository before their first release with it: the maintainer creates it
+(public) in the organization `elixircloud`. The `release` environment
+provides the Docker Hub credentials of the organization's other release
+workflows (secrets `DOCKERHUB_LOGIN` and `DOCKERHUB_TOKEN`), which must be
+allowed to push to it. Enable immutable tags for the repository on Docker
+Hub (for version tags, e.g., the pattern `^[0-9]`, so that the signature
+and attestation tags of cosign stay writable), so that nobody can move a
+version tag by hand either.
+
 Each PyPI project trusts this workflow file (`release.yml`) in the
 environment `release`. When the environment or the workflow file is renamed,
 update the trusted publisher of every existing project on PyPI (Manage
@@ -157,6 +173,33 @@ package** job fails (the tag then exists already; fix the publisher and
 `release` (2026-10, #25) was done this way for
 `foca-plugin-generic-routing-random`, `foca-plugin-tes-routing-distance` and
 the pending publisher of `foca-plugins`.
+
+## Images
+
+Some packages have an image: `tes.data.crypt4gh` has the decryption image
+of its executor (`plugins/tes/data/crypt4gh/image/Dockerfile`), published
+as `docker.io/elixircloud/foca-plugin-tes-data-crypt4gh-decrypt`. A
+package's image is released with the package, from its tag, and tagged
+with the package's version only, exactly as on PyPI (e.g., `1.2.0` or
+`1.2.0rc1`; there is no `latest`, as the plugin's settings name the image
+of the installed version, best by digest). The image is built from
+`<package>/image/Dockerfile` with the package's directory as the build
+context; `<package>/image/smoke.sh IMAGE`, if it exists, is its smoke test.
+CI builds, smoke tests and scans it for every pull request and push
+(job `smoke`), and uploads the findings that have a fix to code scanning:
+check the open alerts before a release, as the release's scan fails on the
+same ones. CI fails on them only if the package is affected, so that a
+finding for one image doesn't block the other packages.
+
+To add an image to a package, add the name of its Docker Hub repository to
+`IMAGES` in `scripts/release.py` (the job `prepare` fails for a package
+with a Dockerfile but no image name, and the other way round), and its
+build, smoke test and scan to CI. Accepted vulnerabilities of all images
+are listed in `.trivyignore.yaml`, each with a reason and an expiry date.
+
+Forks publish to the Docker Hub organization of their repository variable
+`DOCKERHUB_ORG` (by default `elixircloud`): set it, and the environment's
+Docker Hub secrets, before pushing a test tag in a fork.
 
 ## New FOCA versions
 
@@ -193,7 +236,8 @@ files):
 1. **Prepare release** (job `prepare`): first, before anything is installed or built,
    checks that the tag names a package and its version on that commit and
    that the package may be published (the example plugin
-   `generic.example.noop` never is); then that the commit is on `main`, that CI
+   `generic.example.noop` never is) and determines its image, if it has one
+   (see [Images](#images)); then that the commit is on `main`, that CI
    passed for it (a successful run of `ci.yml` for a push of the commit to
    `dev`; if there is none, or CI is still running, the job fails and says to
    re-run the workflow once CI passed), the
@@ -209,18 +253,46 @@ files):
    `uv.lock`).
 2. **Attest distributions** (`attest`): GitHub artifact attestations (SLSA build
    provenance).
-3. **Release package** (`pypi`): fails if the tag no longer points to the built
+3. For packages with an image (see [Images](#images); skipped for the
+   others), as the release images of the organization's other
+   repositories:
+    1. **Push release image** (`push`): builds the image of the commit once
+       (`linux/amd64`, with SBOM and provenance attestations, the labels of
+       its Dockerfile and the version and commit) and pushes it by digest
+       only, untagged, with the Docker Hub credentials of the `release`
+       environment.
+    2. **Scan release image** (`scan`): scans exactly that digest with
+       Trivy (the shared action `scan-image` of `elixir-cloud-aai/.github`;
+       fails on critical and high vulnerabilities that have a fix, except
+       those accepted in `.trivyignore.yaml`) and runs the image's smoke
+       test on it, in a job without credentials or signing identity.
+    3. **Release image** (`image`): fails if the tag no longer points to the
+       built commit, or if the image's version tag exists already for
+       another digest (published tags don't move); then attests the
+       digest's build provenance (GitHub artifact attestation, also pushed
+       to Docker Hub), signs it (Sigstore keyless signing, `cosign`, with
+       the workflow's identity) and tags it with the version, once the
+       distributions are attested too. Re-runs of failed jobs sign the same
+       digest again and leave its tag as it is. A digest that fails
+       its scan is never signed or tagged, and the package isn't released;
+       it stays on Docker Hub, untagged.
+4. **Release package** (`pypi`): only after the package's image, if it has
+   one; fails if the tag no longer points to the built
    commit; then trusted publishing (OIDC, no API token) from the
    protected `release` environment, with PEP 740 attestations; already
    uploaded files are skipped, so re-runs of failed jobs complete an upload.
-4. **Publish release** (`publish`): checks the tag again; the GitHub release of the
+5. **Publish release** (`publish`): checks the tag again; the GitHub release of the
    tag, with the notes above and the distributions as assets, created as a
    draft and published last. A release published already must have exactly
    the built distributions (by SHA-256), or the job fails.
 
 The job IDs and names are those of the release workflows of the
 organisation's other repositories where the jobs do the same (`prepare`,
-`pypi`, `publish`). Renaming the jobs does not affect the required checks
+`push`, `scan`, `pypi`, `publish`); `image` (**Release image**) has no
+counterpart, as cloud-registry signs and tags its image in `publish`, which
+here creates the GitHub release only. The jobs `push`, `image` and `pypi` run
+in the `release` environment, so each waits for its approval if the
+environment requires one. Renaming the jobs does not affect the required checks
 (only `CI passed`), nor PyPI's trusted publishers (they name the workflow
 file and the environment, not the jobs).
 
