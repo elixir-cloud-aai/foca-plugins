@@ -70,6 +70,21 @@ def decryption_executor(*files: tuple[str, str]) -> dict[str, Any]:
     return {"image": IMAGE, "command": command}
 
 
+def teardown_executor(*targets: str) -> dict[str, Any]:
+    """Build the expected teardown executor.
+
+    Args:
+        targets: Decrypted files.
+
+    Returns:
+        Executor.
+    """
+    command = ["crypt4gh-decrypt"]
+    for path in targets:
+        command += ["--remove", path]
+    return {"image": IMAGE, "command": command}
+
+
 def make_context() -> Context:
     """Build the context of a hook call.
 
@@ -138,6 +153,8 @@ def test_settings_have_defaults() -> None:
     assert config.volume == VOLUME
     assert config.encrypted_suffixes == (".c4gh",)
     assert config.key_suffixes == (".sec",)
+    assert config.teardown is True
+    assert config.teardown_on_error is False
 
 
 @pytest.mark.parametrize(
@@ -162,6 +179,7 @@ def test_settings_have_defaults() -> None:
         {"image": IMAGE, "key_suffixes": [".key.c4gh"]},
         {"image": IMAGE, "encrypted_suffixes": [".x.sec"]},
         {"image": IMAGE, "other": "value"},
+        {"image": IMAGE, "teardown": False, "teardown_on_error": True},
     ],
 )
 def test_settings_are_validated(data: dict[str, Any]) -> None:
@@ -190,6 +208,7 @@ def test_on_request_adds_decryption(plugin: Crypt4gh) -> None:
                 "image": "aligner",
                 "command": ["align", "/in/ref.fa", "/vol/crypt4gh/reads.fq", "/out"],
             },
+            teardown_executor("/vol/crypt4gh/reads.fq"),
         ],
         volumes=[VOLUME],
     )
@@ -248,8 +267,80 @@ def test_on_request_uses_settings() -> None:
             ],
         },
         {"image": "x", "command": ["cat", "/data/plain/a"]},
+        {
+            "image": "decrypt:1",
+            "command": ["python3", "/app/decrypt.py", "--remove", "/data/plain/a"],
+        },
     ]
     assert request.payload["volumes"] == ["/data/plain"]
+
+
+def test_on_request_can_leave_out_teardown() -> None:
+    """Without `teardown`, only the decryption executor is added."""
+    plugin = Crypt4gh(PLUGIN_ID, Crypt4ghConfig(image=IMAGE, teardown=False))
+    request = make_inbound(make_task())
+    plugin.on_request(request, make_context())
+    executors = request.payload["executors"]
+    assert len(executors) == 2
+    assert executors[0] == decryption_executor(
+        ("/in/reads.fq.c4gh", "/vol/crypt4gh/reads.fq")
+    )
+    assert "ignore_error" not in executors[1]
+
+
+def test_on_request_runs_teardown_after_errors() -> None:
+    """With `teardown_on_error`, the task's own executors ignore errors.
+
+    The decryption and teardown executors don't, and a second pass leaves
+    the task as it is.
+    """
+    plugin = Crypt4gh(PLUGIN_ID, Crypt4ghConfig(image=IMAGE, teardown_on_error=True))
+    task = make_task(
+        executors=[
+            {"image": "a", "command": ["true"], "ignore_error": False},
+            {"image": "b", "command": ["cat", "/in/reads.fq.c4gh"]},
+            "not an executor",
+        ]
+    )
+    request = make_inbound(task)
+    plugin.on_request(request, make_context())
+    executors = request.payload["executors"]
+    assert executors[0] == decryption_executor(
+        ("/in/reads.fq.c4gh", "/vol/crypt4gh/reads.fq")
+    )
+    assert executors[1] == {"image": "a", "command": ["true"], "ignore_error": True}
+    assert executors[2] == {
+        "image": "b",
+        "command": ["cat", "/vol/crypt4gh/reads.fq"],
+        "ignore_error": True,
+    }
+    assert executors[3] == "not an executor"
+    assert executors[4] == teardown_executor("/vol/crypt4gh/reads.fq")
+    once = copy.deepcopy(request.payload)
+    again = make_inbound(copy.deepcopy(once))
+    plugin.on_request(again, make_context())
+    assert again.payload == once
+
+
+def test_on_request_moves_teardown_to_the_end(plugin: Crypt4gh) -> None:
+    """Copies of the teardown executor among the task's own are dropped.
+
+    The teardown runs once, after all of the task's own executors, also if
+    the task names it before them.
+
+    Args:
+        plugin: Plugin.
+    """
+    early = teardown_executor("/vol/crypt4gh/reads.fq")
+    other = {"image": IMAGE, "command": ["crypt4gh-decrypt", "--remove", "/x"]}
+    task = make_task(executors=[early, {"image": "a", "command": ["true"]}, other])
+    request = make_inbound(task)
+    plugin.on_request(request, make_context())
+    assert request.payload["executors"][1:] == [
+        {"image": "a", "command": ["true"]},
+        other,
+        early,
+    ]
 
 
 @pytest.mark.parametrize(
@@ -381,6 +472,7 @@ def test_on_request_keeps_malformed_items(plugin: Crypt4gh) -> None:
     assert payload["executors"][1:] == [
         "e",
         {"image": "a", "command": [1, "/vol/crypt4gh/reads.fq"]},
+        teardown_executor("/vol/crypt4gh/reads.fq"),
     ]
     assert payload["volumes"] == [VOLUME]
     assert payload["outputs"] == task["outputs"]
@@ -428,7 +520,7 @@ def test_on_request_changes_aliases_of_inputs(plugin: Crypt4gh) -> None:
     )
     request = make_inbound(task)
     plugin.on_request(request, make_context())
-    first, second = request.payload["executors"][1:]
+    first, second = request.payload["executors"][1:-1]
     assert first["command"] == ["cat", *(["/vol/crypt4gh/reads.fq"] * 2)]
     assert first["stdin"] == "/vol/crypt4gh/reads.fq"
     assert second["command"] == ["ls", "in/reads.fq.c4gh"]
@@ -625,10 +717,12 @@ def test_on_request_changes_arguments_of_rewritten_tasks(plugin: Crypt4gh) -> No
     again = make_inbound(task)
     plugin.on_request(again, make_context())
     executors = again.payload["executors"]
-    assert len(executors) == 3
+    assert len(executors) == 4
     assert executors[0] == request.payload["executors"][0]
     assert executors[2]["command"] == ["cat", "/vol/crypt4gh/reads.fq"]
     assert executors[2]["stdin"] == "/vol/crypt4gh/reads.fq"
+    # The teardown moves after the added executor
+    assert executors[3] == teardown_executor("/vol/crypt4gh/reads.fq")
     assert again.payload["volumes"] == [VOLUME]
 
 

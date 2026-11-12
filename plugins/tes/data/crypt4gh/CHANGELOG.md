@@ -15,3 +15,8 @@ entry with its issue and pull request numbers (see "Releasing" in the docs).
   its own, with the secret keys among the task's inputs, to a volume of its
   own; with the decryption image (`image/Dockerfile`), built and smoke
   tested in CI, not yet published (#65, #66).
+- Add a teardown executor after the task's own executors that removes the
+  decrypted files (`teardown`, on by default; the script's `--remove`
+  option), and the opt-in setting `teardown_on_error`, which sets
+  `ignore_error` on the task's own executors so that the teardown runs
+  after they fail where the backend supports it (#67, #73).
