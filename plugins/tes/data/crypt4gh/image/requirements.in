@@ -1,0 +1,11 @@
+# Python packages of the decryption image (`Dockerfile`), compiled with their
+# hashes to `requirements.txt`, from this directory, for the image's Python
+# version and platforms:
+#
+#   uv pip compile requirements.in --generate-hashes --only-binary :all: \
+#     --python-version 3.13 --python-platform x86_64-manylinux_2_28 \
+#     -o requirements.txt
+#
+# Keep the version within the range that the tests use (`crypt4gh` in the
+# `dev` group of the root `pyproject.toml`)
+crypt4gh==1.8.6

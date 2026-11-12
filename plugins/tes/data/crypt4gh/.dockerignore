@@ -1,0 +1,10 @@
+# Build context of the decryption image (`image/Dockerfile`, built from this
+# directory). Allowlist: only the files that the image needs, so that local
+# files (e.g., `.env` files, virtual environments, caches) stay out of it
+*
+!image/requirements.txt
+!src/foca_plugins/tes/data/crypt4gh/decrypt.py
+
+# Never local environment files, also if the allowlist grows
+**/.env*
+!**/.env.example

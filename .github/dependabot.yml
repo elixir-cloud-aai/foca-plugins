@@ -20,6 +20,32 @@ updates:
       # Dependencies match the first group listed
       python-dependencies:
         patterns: ["*"]
+  # The image of `tes.data.crypt4gh`'s decryption executor: the digest of its
+  # base image (`Dockerfile`; Python versions are chosen deliberately, so
+  # minor and major updates are left out) and its Python packages
+  # (`requirements.txt`, compiled from `requirements.in`)
+  - package-ecosystem: docker
+    directory: /plugins/tes/data/crypt4gh/image
+    labels: ["type: dependencies"]
+    schedule:
+      interval: monthly
+    target-branch: dev
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+  - package-ecosystem: pip
+    directory: /plugins/tes/data/crypt4gh/image
+    labels: ["type: dependencies"]
+    schedule:
+      interval: monthly
+    target-branch: dev
+    # `crypt4gh` itself is updated by hand, together with the version that
+    # the tests use (see `requirements.in`); its dependencies by Dependabot
+    ignore:
+      - dependency-name: crypt4gh
+    groups:
+      crypt4gh-image:
+        patterns: ["*"]
   # Actions in the workflows
   - package-ecosystem: github-actions
     directory: /

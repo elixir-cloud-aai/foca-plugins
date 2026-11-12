@@ -8,6 +8,8 @@ executor, or allow only executor images of listed registries.
 
 Subgroups, with their plugins as `<subgroup>/<name>/`:
 
+- `data/`: [`crypt4gh`](data/crypt4gh/), decryption of a task's Crypt4GH
+  inputs in an extra executor;
 - `routing/`: [`distance`](routing/distance/), routing by the distance of
   a task's inputs to the backends.
 
