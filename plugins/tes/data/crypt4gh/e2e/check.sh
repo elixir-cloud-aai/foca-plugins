@@ -29,9 +29,13 @@
 # IMAGE: the decryption image to test, e.g., as built by CI's smoke test;
 # built from this checkout if not given. Environment: `E2E_WORK_DIR`, an
 # absolute path on the host that the Docker daemon can mount (default
-# `/tmp/foca-plugins-e2e`; removed and recreated), `E2E_PORT`, the port of
-# proTES on the host's loopback interface (default 18080), and
-# `E2E_WAIT`, the seconds to wait for each task (default 180).
+# `/tmp/foca-plugins-e2e`; created by the test, and removed when it ends;
+# an existing directory is reused only if an earlier run created it),
+# `E2E_PORT`, the port of proTES on the host's loopback interface (default
+# 18080; also names the Compose project, so that runs with different ports
+# and work directories don't interfere), and `E2E_WAIT`, the seconds to
+# wait for each task (default 180). Exits with status 2 if a tool or
+# Docker is missing, before it starts anything.
 
 set -euo pipefail
 
@@ -41,6 +45,9 @@ root="$(cd "${plugin}/../../../.." && pwd)"
 export E2E_WORK_DIR="${E2E_WORK_DIR:-/tmp/foca-plugins-e2e}"
 export E2E_PORT="${E2E_PORT:-18080}"
 export COMPOSE_FILE="${e2e}/compose.yaml"
+export COMPOSE_PROJECT_NAME="foca-plugins-e2e-${E2E_PORT}"
+# Marks the work directory as this test's, so that it never empties another
+marker="${E2E_WORK_DIR}/.foca-plugins-e2e"
 api="http://127.0.0.1:${E2E_PORT}/ga4gh/tes/v1"
 wait="${E2E_WAIT:-180}"
 # The image of the plugin's config (`config.yaml`)
@@ -51,12 +58,30 @@ image='alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b
 plaintext="hello crypt4gh"
 
 case "${E2E_WORK_DIR}" in
-  /?*) ;;
+  /*[!/.]*) ;;
   *)
-    echo "E2E_WORK_DIR must be an absolute path, not ${E2E_WORK_DIR}" >&2
+    echo "E2E_WORK_DIR must be an absolute path below /, not ${E2E_WORK_DIR}" >&2
     exit 2
     ;;
 esac
+if [[ -e "${E2E_WORK_DIR}" && ! -f "${marker}" ]]; then
+  echo "E2E_WORK_DIR ${E2E_WORK_DIR} exists, but wasn't made by this test" >&2
+  exit 2
+fi
+for tool in docker uv curl jq; do
+  command -v "${tool}" > /dev/null || {
+    echo "The end-to-end test needs ${tool}" >&2
+    exit 2
+  }
+done
+docker compose version > /dev/null || {
+  echo "The end-to-end test needs Docker Compose" >&2
+  exit 2
+}
+docker info > /dev/null || {
+  echo "The end-to-end test needs a running Docker daemon" >&2
+  exit 2
+}
 
 fail() {
   echo "::error::$1" >&2
@@ -65,20 +90,33 @@ fail() {
 
 # The files that containers wrote are root's: removed by a container, too
 remove_work_dir() {
-  if [[ -d "${E2E_WORK_DIR}" ]]; then
+  if [[ -f "${marker}" ]]; then
     docker run --rm -v "${E2E_WORK_DIR}:/work" "${image}" \
-      sh -c 'rm -rf /work/* /work/.[!.]*' || true
-    rm -rf "${E2E_WORK_DIR}"
+      find /work -mindepth 1 -delete || true
+    rm -rf "${E2E_WORK_DIR}" || true
   fi
 }
 
+# The task containers of this run (Funnel's, with the label of `funnel.yaml`
+# and mounts in this run's work directory)
+task_containers() {
+  local id
+  for id in $(docker ps -aq --filter label=foca-plugins-e2e=task); do
+    docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' "${id}" |
+      grep -qF "${E2E_WORK_DIR}/" && echo "${id}"
+  done
+}
+
+# Runs with errors ignored, so that every step runs and the status of the
+# test is kept
 cleanup() {
   local status=$?
+  set +e
   if [[ "${status}" != 0 ]]; then
-    docker compose logs --no-color protes protes-worker funnel || true
+    docker compose logs --no-color protes protes-worker funnel
   fi
-  docker compose down --volumes --remove-orphans || true
-  docker ps -aq --filter label=foca-plugins-e2e=task | xargs -r docker rm -f || true
+  docker compose down --volumes --remove-orphans
+  task_containers | xargs -r docker rm -f
   remove_work_dir
   rm -f "${body}"
   exit "${status}"
@@ -87,6 +125,8 @@ body="$(mktemp)"
 trap cleanup EXIT
 
 remove_work_dir
+mkdir -p "${E2E_WORK_DIR}"
+touch "${marker}"
 mkdir -p "${E2E_WORK_DIR}/wheels" "${E2E_WORK_DIR}/data" "${E2E_WORK_DIR}/funnel"
 # The containers that make the data run as root; the directory is the
 # runner's
@@ -122,12 +162,18 @@ start() {
 echo "Starting the stack"
 start
 
+# Get a JSON document from a URL in the Compose network (from the container
+# of `services.py`, which has Python)
+net_get() {
+  docker compose exec -T services python -c \
+    "import json, sys, urllib.request; \
+    print(json.dumps(json.load(urllib.request.urlopen(sys.argv[1], timeout=60))))" \
+    "$1"
+}
+
 # An access token of the identity provider
 token() {
-  docker compose exec -T services python -c \
-    "import json, urllib.request; \
-    print(json.load(urllib.request.urlopen( \
-    'http://localhost:8080/oidc/token', timeout=60))['access_token'])"
+  net_get http://localhost:8080/oidc/token | jq -er .access_token
 }
 auth="$(token)"
 
@@ -169,13 +215,13 @@ create() {
   jq -r .id "${body}"
 }
 
-# Wait until a task has a state
+# Wait until a task has a state, or one of several (separated by spaces)
 await_state() {
   local state=""
   for _ in $(seq "${wait}"); do
     check GET "/tasks/$1?view=MINIMAL" 200 '.state != null'
     state="$(jq -r .state "${body}")"
-    [[ "${state}" == "$2" ]] && return
+    [[ " $2 " == *" ${state} "* ]] && return
     sleep 1
   done
   check GET "/tasks/$1?view=FULL" 200 'true'
@@ -193,10 +239,7 @@ backend_id() {
 # Check the task as Funnel serves it (view `FULL`), from the Compose network,
 # against a jq filter (with the decryption image as `$decrypt`)
 check_backend() {
-  docker compose exec -T services python -c \
-    "import json, sys, urllib.request; \
-    print(json.dumps(json.load(urllib.request.urlopen(sys.argv[1], timeout=60))))" \
-    "http://funnel:8000/v1/tasks/$1?view=FULL" > "${body}"
+  net_get "http://funnel:8000/v1/tasks/$1?view=FULL" > "${body}"
   if ! jq -e --arg decrypt "${decrypt_image}" "$2" "${body}" > /dev/null; then
     cat "${body}" >&2
     fail "Task $1 at Funnel doesn't match $2"
@@ -211,10 +254,12 @@ volume() {
 
 # Check that the volume of a task at Funnel exists and is empty
 check_empty() {
-  local dir
+  local dir entries
   dir="$(volume "$1")"
   [[ -d "${dir}" ]] || fail "No volume at ${dir}"
-  [[ -z "$(ls -A "${dir}")" ]] || fail "$2: $(ls -A "${dir}")"
+  # A listing that fails must not count as empty
+  entries="$(ls -A "${dir}")" || fail "Can't list ${dir}"
+  [[ -z "${entries}" ]] || fail "$2: ${entries}"
 }
 
 # The executors that the plugin adds, as Funnel has them (a jq filter;
@@ -246,8 +291,13 @@ id="$(create '["hello.txt.c4gh", "other.txt.c4gh", "alice.sec"]' \
   '["cat", "/in/hello.txt.c4gh"]')"
 await_state "${id}" EXECUTOR_ERROR
 remote="$(backend_id "${id}")"
+# `hello.txt.c4gh` is decrypted first, then `other.txt.c4gh` fails: the
+# executor removes the file that it decrypted
 check_backend "${remote}" '
   (.executors | length == 3)
+  and .executors[0].command == ["crypt4gh-decrypt", "--key", "/keys/alice.sec",
+    "--file", "/in/hello.txt.c4gh", "/vol/crypt4gh/hello.txt",
+    "--file", "/in/other.txt.c4gh", "/vol/crypt4gh/other.txt"]
   and (.logs[0].logs | length == 1)
   and .logs[0].logs[0].exit_code == 1'
 check_empty "${remote}" "The failed decryption left files"
@@ -275,9 +325,11 @@ auth="$(token)"
 
 echo "4. With teardown_on_error, the teardown runs after a failing executor"
 id="$(create '["hello.txt.c4gh", "alice.sec"]' "${fails}")"
-# Funnel 0.11.14 runs the executors after one that fails with `ignore_error`,
-# but ends the task in `EXECUTOR_ERROR` (as proTES's integration test finds)
-await_state "${id}" EXECUTOR_ERROR
+# The final state is the backend's: Funnel 0.11.14 runs the executors after
+# one that fails with `ignore_error`, but ends the task in `EXECUTOR_ERROR`
+# (as proTES's integration test finds); TES 1.1, and newer Funnel sources,
+# have `COMPLETE`. The executor logs and the volume are what counts
+await_state "${id}" "EXECUTOR_ERROR COMPLETE"
 remote="$(backend_id "${id}")"
 check_backend "${remote}" "${rewritten}
   and .executors[1].ignore_error == true

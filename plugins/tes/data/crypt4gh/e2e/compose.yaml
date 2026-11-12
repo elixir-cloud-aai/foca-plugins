@@ -6,9 +6,8 @@
 # containers through the Docker socket of the host, so its work directory
 # (`E2E_WORK_DIR`/funnel) has the same path in Funnel and on the host. Only
 # proTES is published, on the host's loopback interface (`E2E_PORT`).
-# MongoDB and RabbitMQ as in the integration test of proTES
-
-name: foca-plugins-e2e
+# MongoDB and RabbitMQ as in the integration test of proTES. The project
+# name is set per run by `check.sh` (`COMPOSE_PROJECT_NAME`)
 
 x-protes: &protes
   image: foca-plugins-e2e-protes:local

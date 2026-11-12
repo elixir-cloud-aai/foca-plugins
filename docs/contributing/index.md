@@ -83,11 +83,16 @@ It builds the decryption image and the plugin's wheel, starts the stack,
 runs the tasks, and removes the stack, the task containers and its work
 directory when it ends, but not the images. Settings (environment
 variables): `E2E_PORT`, the port of proTES on `127.0.0.1` (default
-`18080`); `E2E_WORK_DIR`, the work directory, an absolute path that the
-Docker daemon can mount (default `/tmp/foca-plugins-e2e`; removed and
-recreated); `E2E_WAIT`, the seconds to wait for each task (default 180).
-Pass an image to test it instead of building one (e.g., `check.sh
-crypt4gh-decrypt:dev`).
+`18080`), which also names the Compose project
+(`foca-plugins-e2e-<port>`), so that runs with different ports and work
+directories can run side by side; `E2E_WORK_DIR`, the work directory, an
+absolute path that the Docker daemon can mount (default
+`/tmp/foca-plugins-e2e`; the test creates it and removes it at the end,
+and refuses an existing directory that an earlier run didn't create);
+`E2E_WAIT`, the seconds to wait for each task (default 180). Pass an image
+to test it instead of building one (e.g., `check.sh
+crypt4gh-decrypt:dev`). Without Docker, Docker Compose, uv, curl or jq,
+it exits with status 2 before starting anything.
 
 Dependabot updates the images of the test's `compose.yaml` and Dockerfiles
 (proTES, Funnel, MongoDB, RabbitMQ), except major versions of those in
