@@ -2,14 +2,16 @@
 """Decryption executor of `tes.data.crypt4gh`: decrypt Crypt4GH files.
 
 Runs in the decryption image (`image/Dockerfile`), as the first executor of
-a task, never in the gateway: the image copies this file alone, so it uses
-the standard library and the `crypt4gh` package only (which the plugin
-doesn't depend on). Gateway-neutral: it gets paths only.
+a task and as its last (the teardown executor), never in the gateway: the
+image copies this file alone, so it uses the standard library and the
+`crypt4gh` package only (which the plugin doesn't depend on).
+Gateway-neutral: it gets paths only.
 
 Usage::
 
     crypt4gh-decrypt --key KEY [--key KEY ...]
         --file SOURCE TARGET [--file SOURCE TARGET ...]
+    crypt4gh-decrypt --clear DIRECTORY
 
 Each `SOURCE` (a Crypt4GH file) is decrypted with the secret keys (Crypt4GH
 or OpenSSH ed25519 keys without passphrase; a file decrypts with any of
@@ -19,11 +21,21 @@ are readable by all (0644), as the task's next executors may run as other
 users. If a key can't be read or a file can't be decrypted, the targets
 written so far are removed and the script exits with status 1, so that the
 task's own executors don't run.
+
+With `--clear`, the script removes everything in `DIRECTORY` (the volume of
+the decrypted files, which belongs to the plugin), but keeps the directory
+itself, which may be a mount point: the decrypted files, temporary files
+of a stopped decryption, and files that the task's executors derived from
+the decrypted files there. Symbolic links in it are removed, not
+followed, and a `DIRECTORY` that is a link is refused. A
+missing directory is fine, so that it may run again; if an entry can't be
+removed, it goes on with the others and exits with status 1.
 """
 
 import argparse
 from collections.abc import Sequence
 import logging
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -144,6 +156,60 @@ def remove(paths: Sequence[Path]) -> None:
             logger.warning("Can't remove %s: %s", path, error)
 
 
+def clear(directory: Path) -> bool:
+    """Remove everything in a directory, as far as possible, but keep it.
+
+    Args:
+        directory: Path of the directory.
+
+    Returns:
+        Whether the directory is empty or missing.
+    """
+    try:
+        entries = sorted(directory.iterdir())
+    except FileNotFoundError:
+        return True
+    except OSError as error:
+        logger.warning("Can't list %s: %s", directory, error)
+        return False
+    done = True
+    for entry in entries:
+        if remove_tree(entry):
+            logger.info("Removed %s", entry)
+        else:  # go on with the others
+            done = False
+    return done
+
+
+def remove_tree(path: Path) -> bool:
+    """Remove a file, a link or a directory with its contents, as far as possible.
+
+    Links are removed, never followed. In a directory, an entry that can't
+    be removed doesn't stop the removal of the others.
+
+    Args:
+        path: Path of the file, link or directory.
+
+    Returns:
+        Whether it is gone; a missing path counts as gone.
+    """
+    done = True
+    try:
+        if path.is_dir() and not path.is_symlink():
+            for child in sorted(path.iterdir()):
+                done = remove_tree(child) and done
+            if done:
+                path.rmdir()
+        else:
+            path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        logger.warning("Can't remove %s: %s", path, error)
+        return False
+    return done
+
+
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     """Parse the arguments.
 
@@ -152,46 +218,78 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
     Returns:
         Arguments `keys` (paths) and `files` (pairs of source and target
-        paths).
+        paths), or `clear` (path of the directory to empty); those not
+        given are `None`.
     """
     parser = argparse.ArgumentParser(
-        prog="crypt4gh-decrypt", description="Decrypt Crypt4GH files."
+        prog="crypt4gh-decrypt",
+        description=(
+            "Decrypt Crypt4GH files, or empty the directory of the decrypted files."
+        ),
     )
     parser.add_argument(
         "--key",
         dest="keys",
         action="append",
-        required=True,
         type=Path,
         metavar="KEY",
-        help="secret key (repeatable)",
+        help="secret key (repeatable; required with --file)",
     )
     parser.add_argument(
         "--file",
         dest="files",
         action="append",
-        required=True,
         nargs=2,
         type=Path,
         metavar=("SOURCE", "TARGET"),
         help="Crypt4GH file and path of the decrypted file (repeatable)",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--clear",
+        type=Path,
+        metavar="DIRECTORY",
+        help=(
+            "absolute path of the directory of the decrypted files, whose"
+            " contents to remove (not with --key or --file)"
+        ),
+    )
+    args = parser.parse_args(argv)
+    if args.clear is not None:
+        if args.keys or args.files:
+            parser.error("--clear can't be combined with --key or --file")
+        # Resolved, so that `//`, `/x/..` or a link to `/` count as `/`
+        if not args.clear.is_absolute() or os.path.realpath(args.clear) == "/":
+            parser.error("--clear needs an absolute path other than /")
+        # Links are never followed, the directory's own neither
+        if args.clear.is_symlink():
+            parser.error("--clear needs a directory, not a symbolic link")
+        return args
+    missing = [
+        option
+        for option, value in (("--key", args.keys), ("--file", args.files))
+        if not value
+    ]
+    if missing:
+        parser.error(f"the following arguments are required: {', '.join(missing)}")
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Decrypt the files of the arguments.
+    """Decrypt the files of the arguments, or empty a directory.
 
     Args:
         argv: Arguments; defaults to those of the command line.
 
     Returns:
-        Exit status: 0 if all files were decrypted, 1 otherwise.
+        Exit status: 0 if all files were decrypted (or the directory was
+        emptied), 1 otherwise.
     """
     # Warnings of `crypt4gh` only: its debug messages include key material
     logging.basicConfig(level=logging.WARNING, format="%(name)s: %(message)s")
     logger.setLevel(logging.INFO)
     args = parse_args(argv)
+    if args.clear is not None:
+        return 0 if clear(args.clear) else 1
     targets = [target for _, target in args.files]
     written: list[Path] = []
     try:

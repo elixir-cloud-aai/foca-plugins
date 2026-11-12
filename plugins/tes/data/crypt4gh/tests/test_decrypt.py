@@ -4,8 +4,8 @@ The script runs in the decryption image; here, it runs in the test
 environment. Keys and Crypt4GH files are made for each test with the
 `crypt4gh` package (a development dependency), in a temporary directory:
 the repository holds no keys, so that secret scanners have nothing to
-report. The last test runs the script with the arguments of the executor
-that the plugin adds.
+report. The last test runs the script with the arguments of the decryption
+and teardown executors that the plugin adds.
 """
 
 from collections.abc import Callable
@@ -517,25 +517,259 @@ def test_keeps_permissions_of_foreign_directories(
     assert f"Can't change permissions of {out}" in caplog.text
 
 
-def test_needs_keys_and_files(capsys: pytest.CaptureFixture[str]) -> None:
-    """Keys and files are required arguments.
+@pytest.mark.parametrize(
+    ("argv", "missing"),
+    [
+        (["--key", "/in/alice.sec"], "--file"),
+        (["--file", "/in/a.c4gh", "/vol/a"], "--key"),
+        ([], "--key, --file"),
+    ],
+)
+def test_needs_keys_and_files(
+    argv: list[str], missing: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Keys and files are required arguments, unless a directory is cleared.
 
     Args:
+        argv: Arguments.
+        missing: Option that the error names.
         capsys: Captured output.
     """
     with pytest.raises(SystemExit) as raised:
-        decrypt.main(["--key", "/in/alice.sec"])
+        decrypt.main(argv)
     assert raised.value.code == 2
-    assert "--file" in capsys.readouterr().err
+    assert missing in capsys.readouterr().err
+
+
+def test_clears_directory(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """The teardown removes everything in the directory, but keeps it.
+
+    Files, temporary files, directories and symbolic links are removed;
+    links are not followed. A missing directory is fine, so that the
+    teardown may run again.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        caplog: Captured logs.
+    """
+    volume = tmp_path / "vol"
+    outside = tmp_path / "outside"
+    (volume / "sub").mkdir(parents=True)
+    outside.mkdir()
+    (outside / "keep").write_bytes(b"keep")
+    for name in ("one", ".one.x1y2", "one.fai", "sub/derived"):
+        (volume / name).write_bytes(b"data")
+    (volume / "link").symlink_to(outside)
+    (volume / "file-link").symlink_to(outside / "keep")
+    caplog.set_level(logging.INFO, logger="crypt4gh-decrypt")
+    assert decrypt.main(["--clear", str(volume)]) == 0
+    assert volume.is_dir()
+    assert list(volume.iterdir()) == []
+    assert (outside / "keep").read_bytes() == b"keep"
+    assert f"Removed {volume / 'one'}" in caplog.text
+    assert decrypt.main(["--clear", str(volume)]) == 0
+    assert decrypt.main(["--clear", str(tmp_path / "gone")]) == 0
+
+
+def test_fails_on_entries_that_cant_be_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Entries that the teardown can't remove are logged; status 1.
+
+    The other entries are removed all the same.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        monkeypatch: Patches `Path.unlink`.
+        caplog: Captured logs.
+    """
+    volume = tmp_path / "vol"
+    volume.mkdir()
+    for name in ("one", "two"):
+        (volume / name).write_bytes(b"data")
+    unlink = Path.unlink
+
+    def refuse_one(path: Path, missing_ok: bool = False) -> None:
+        """Refuse to remove the entry `one`.
+
+        Args:
+            path: Path.
+            missing_ok: Whether a missing file is fine.
+
+        Raises:
+            PermissionError: The path is the entry `one`.
+        """
+        if path.name == "one":
+            raise PermissionError(os.strerror(13))
+        unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse_one)
+    assert decrypt.main(["--clear", str(volume)]) == 1
+    assert [path.name for path in volume.iterdir()] == ["one"]
+    assert f"Can't remove {volume / 'one'}" in caplog.text
+
+
+def test_goes_on_in_directories_after_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An entry of a subdirectory that can't be removed doesn't stop the rest.
+
+    Its siblings and the other entries of the volume are removed; the
+    subdirectory stays with that entry; status 1.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        monkeypatch: Patches `Path.unlink`.
+        caplog: Captured logs.
+    """
+    volume = tmp_path / "vol"
+    (volume / "sub" / "deeper").mkdir(parents=True)
+    for name in ("a", "bad", "z", "deeper/x"):
+        (volume / "sub" / name).write_bytes(b"data")
+    (volume / "other").write_bytes(b"data")
+    unlink = Path.unlink
+
+    def refuse_bad(path: Path, missing_ok: bool = False) -> None:
+        """Refuse to remove the entry `bad`.
+
+        Args:
+            path: Path.
+            missing_ok: Whether a missing file is fine.
+
+        Raises:
+            PermissionError: The path is the entry `bad`.
+        """
+        if path.name == "bad":
+            raise PermissionError(os.strerror(13))
+        unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse_bad)
+    assert decrypt.main(["--clear", str(volume)]) == 1
+    assert [str(path.relative_to(volume)) for path in volume.rglob("*")] == [
+        "sub",
+        "sub/bad",
+    ]
+    assert f"Can't remove {volume / 'sub' / 'bad'}" in caplog.text
+
+
+def test_skips_entries_removed_meanwhile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An entry that is gone when the teardown removes it is fine.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        monkeypatch: Patches `Path.unlink`.
+    """
+    volume = tmp_path / "vol"
+    volume.mkdir()
+    (volume / "one").write_bytes(b"data")
+
+    def gone(path: Path, missing_ok: bool = False) -> None:
+        """Act as if the entry was removed by someone else.
+
+        Args:
+            path: Path.
+            missing_ok: Whether a missing file is fine.
+
+        Raises:
+            FileNotFoundError: Always.
+        """
+        raise FileNotFoundError(os.strerror(2))
+
+    monkeypatch.setattr(Path, "unlink", gone)
+    assert decrypt.main(["--clear", str(volume)]) == 0
+
+
+def test_fails_on_directories_that_cant_be_listed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A directory that can't be listed fails the teardown.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        monkeypatch: Patches `Path.iterdir`.
+        caplog: Captured logs.
+    """
+
+    def refuse(path: Path) -> None:
+        """Refuse to list directories.
+
+        Args:
+            path: Path.
+
+        Raises:
+            PermissionError: Always.
+        """
+        raise PermissionError(os.strerror(13))
+
+    monkeypatch.setattr(Path, "iterdir", refuse)
+    assert decrypt.main(["--clear", str(tmp_path)]) == 1
+    assert f"Can't list {tmp_path}" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["--clear", "/vol/a", "--key", "/in/alice.sec"], "can't be combined"),
+        (["--clear", "/vol/a", "--file", "/in/a.c4gh", "/vol/a"], "can't be combined"),
+        (["--clear", "vol/a"], "absolute path other than /"),
+        (["--clear", "/"], "absolute path other than /"),
+        (["--clear", "//"], "absolute path other than /"),
+        (["--clear", "/vol/.."], "absolute path other than /"),
+    ],
+)
+def test_refuses_bad_clear_arguments(
+    argv: list[str], message: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--clear` needs an absolute path other than `/`, and no keys or files.
+
+    Args:
+        argv: Arguments.
+        message: Part of the expected error.
+        capsys: Captured output.
+    """
+    with pytest.raises(SystemExit) as raised:
+        decrypt.main(argv)
+    assert raised.value.code == 2
+    error = capsys.readouterr().err
+    assert "--clear" in error
+    assert message in error
+
+
+def test_refuses_to_clear_links(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A directory that is a symbolic link isn't followed, so not emptied.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        capsys: Captured output.
+    """
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "keep").write_bytes(b"keep")
+    (tmp_path / "vol").symlink_to(tmp_path / "data")
+    with pytest.raises(SystemExit) as raised:
+        decrypt.main(["--clear", str(tmp_path / "vol")])
+    assert raised.value.code == 2
+    assert "not a symbolic link" in capsys.readouterr().err
+    assert (tmp_path / "data" / "keep").exists()
 
 
 def test_runs_executor_of_plugin(
     tmp_path: Path, alice: KeyPair, encrypt_file: Encrypt
 ) -> None:
-    """The executor that the plugin adds decrypts the files of the task.
+    """The executors that the plugin adds decrypt and remove the files.
 
     The paths of the task are those of the test's directory, so that the
-    script finds them; the task's own executor gets the decrypted file.
+    script finds them; the task's own executor gets the decrypted file,
+    which the teardown executor removes.
 
     Args:
         tmp_path: Temporary directory of the test.
@@ -562,3 +796,6 @@ def test_runs_executor_of_plugin(
     assert decrypt.main(executors[0]["command"][1:]) == 0
     assert Path(executors[1]["command"][1]).read_bytes() == b"hello"
     assert executors[1]["command"][1] == str(volume / "data.txt")
+    assert executors[2]["command"] == ["crypt4gh-decrypt", "--clear", str(volume)]
+    assert decrypt.main(executors[2]["command"][1:]) == 0
+    assert list(volume.iterdir()) == []

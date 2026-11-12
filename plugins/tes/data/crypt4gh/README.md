@@ -4,9 +4,10 @@
 Decrypts the [Crypt4GH](https://www.ga4gh.org/news_item/crypt4gh-a-secure-method-for-sharing-human-genetic-data/)
 inputs of TES tasks, which TES implementations can't read themselves: adds
 an executor before the task's own ones that decrypts the Crypt4GH inputs
-with the secret keys among the task's inputs to a volume of its own, and
-points the task's executors to the decrypted files. The successor of the
-Crypt4GH middleware of proTES.
+with the secret keys among the task's inputs to a volume of its own,
+points the task's executors to the decrypted files, and adds an executor
+after them that empties that volume again. The successor of the Crypt4GH
+middleware of proTES.
 <!-- --8<-- [end:summary] -->
 
 | | |
@@ -38,11 +39,11 @@ Crypt4GH middleware of proTES.
 3. Leaves tasks without Crypt4GH inputs as they are, even if they have
    keys. Tasks that it changed already (they have `volume` once and, as
    their first executor, exactly the decryption executor that it would add)
-   are checked as in step 4, except for that volume, and only the arguments
-   of their other executors are changed (step 6), so that a task sent
-   through the gateway twice gets one decryption executor. This holds for gateways with
-   the same `image`, `command` and `volume` only: chain gateways with this
-   plugin only if their settings are the same.
+   are checked as in step 4, except for that volume, and only their other
+   executors are changed (steps 6 and 7), so that a task sent through the
+   gateway twice gets one decryption executor and one teardown executor.
+   This holds for gateways with the same settings only: chain gateways with
+   this plugin only if their settings are the same.
 4. Otherwise, it rejects the task with `422 Unprocessable Content` if:
    - it has no secret key among its inputs;
    - a Crypt4GH input or key has no absolute, normalized path (e.g.,
@@ -71,6 +72,12 @@ Crypt4GH middleware of proTES.
    argument such as
    `--in=/in/reads.fq.c4gh` keeps the encrypted file, as do `env` and
    `workdir`.
+7. With `teardown` (the default), adds the teardown executor after the
+   task's own executors, which empties the volume (see [The teardown
+   executor](#the-teardown-executor)). Exact copies of it among the task's
+   own executors are moved to the end, not kept where they are, so that it
+   runs once, after all of them. With `teardown_on_error`, the task's own
+   executors get `ignore_error: true`.
 
 For example, a task with the inputs `/in/reads.fq.c4gh` and
 `/keys/alice.sec` and the executor `align /in/reads.fq.c4gh` gets these
@@ -83,7 +90,11 @@ executors:
     "command": ["crypt4gh-decrypt", "--key", "/keys/alice.sec",
                 "--file", "/in/reads.fq.c4gh", "/vol/crypt4gh/reads.fq"]
   },
-  {"image": "aligner", "command": ["align", "/vol/crypt4gh/reads.fq"]}
+  {"image": "aligner", "command": ["align", "/vol/crypt4gh/reads.fq"]},
+  {
+    "image": "<image>",
+    "command": ["crypt4gh-decrypt", "--clear", "/vol/crypt4gh"]
+  }
 ]
 ```
 
@@ -108,6 +119,55 @@ that the task fails before its own executors run. Existing files at the
 targets are replaced, not refused, so that a restarted executor (e.g., a
 Kubernetes pod) runs again: the volume belongs to one task, whose
 executors run once each, in order.
+
+### The teardown executor
+
+The teardown executor runs the same script, in the same image, with
+`--clear` and the `volume`. It removes everything in the volume, but not
+the volume itself (a mount point): the decrypted files, temporary files
+that a stopped decryption may have left, and files that the task's
+executors derived from the decrypted files there (e.g., an index written
+next to its input). The volume is reserved for the plugin (no input,
+output or volume of the task may be in it), so nothing there is the
+task's result. Symbolic links in it are removed, not followed, and a
+volume that is a link is refused. An empty or
+missing volume is fine, so that a restarted executor runs again. If an
+entry can't be removed, the executor removes the others and exits with
+status 1, so that the task fails (`EXECUTOR_ERROR`) and the entries that
+remain show in its logs; backends may then skip uploading the task's
+outputs. Copies of the decrypted data that the task's executors write
+outside the volume are not removed.
+
+TES runs a task's executors in order and stops at the first that fails
+(TES 1.1, `ignore_error`). So, by default, the teardown executor runs only
+if all of the task's own executors succeed: after a failed executor, a
+canceled task or a system error, the decrypted files stay in the volume
+until the backend removes the task's working directory (see below). A
+failed decryption removes its own files.
+
+`teardown_on_error` sets `ignore_error: true` on the task's own executors
+(not on the decryption and teardown executors), so that the teardown
+executor runs also after one of them fails. It is off by default, as it
+changes how the task runs and how it is reported, and not all backends
+support it (as of the sources of Funnel and TESK in November 2026):
+
+- The task's next executors run after one of them fails, also those that
+  need the failed executor's results.
+- The task no longer ends with `EXECUTOR_ERROR` when one of its own
+  executors fails: TES says that the backend records the exit code and
+  goes on; Funnel then reports the task as `COMPLETE` if the teardown
+  succeeds. Clients must check the exit codes in the executor logs.
+- TESK accepts only `ignore_error: false` and refuses other tasks with
+  `400 Bad Request`: don't set `teardown_on_error` with TESK backends.
+- Backends that implement TES 1.0, which has no `ignore_error`, may ignore
+  the field and stop at the first failed executor as before.
+- Executors that set `ignore_error: false` themselves get `true`.
+
+Without the teardown, or where it doesn't run, the decrypted files are
+removed with the task's working directory, as far as the backend removes
+it: Funnel removes it after the task unless its worker setting
+`LeaveWorkDir` is set; TESK deletes the task's volume claim after the
+task, unless `KEEP_FAILED_PVC` keeps that of tasks that don't complete.
 
 ### The decryption image
 
@@ -187,6 +247,8 @@ and `plugins.pipeline`.
 | `config.volume` | absolute, normalized path below `/` | `/vol/crypt4gh` | volume of the decrypted files; tasks may not use it or paths in it |
 | `config.encrypted_suffixes` | 1 to 16 suffixes (a dot and 1 to 32 characters, no `/` or spaces) | `[".c4gh"]` | suffixes of the names of Crypt4GH inputs; the longest that matches is removed from the decrypted file's name |
 | `config.key_suffixes` | as `encrypted_suffixes`; none may end with one of them or the other way round (e.g., `.key.c4gh` and `.c4gh`) | `[".sec"]` | suffixes of the names of secret keys among the inputs |
+| `config.teardown` | boolean | `true` | add the teardown executor, which empties the volume after the task's own executors (see [The teardown executor](#the-teardown-executor)) |
+| `config.teardown_on_error` | boolean; needs `teardown` | `false` | set `ignore_error: true` on the task's own executors, so that the teardown executor runs after they fail; not for all backends (see [The teardown executor](#the-teardown-executor)) |
 
 The plugin has no parameters.
 
@@ -201,8 +263,13 @@ The plugin moves no data itself, but the tasks that it changes do:
   dataset (re-encrypt the data for them), and pass them by URL from storage
   that only the task can read.
 - **Decrypted files are written to the task's volume**, on the backend's
-  disks, and are removed with the task's working directory, as the backend
-  removes it; the plugin adds no step that removes them earlier.
+  disks. The teardown executor removes them, with everything else in the
+  volume, after the task's own executors, if they all succeed (or with
+  `teardown_on_error`, where the backend supports it); otherwise they are
+  removed with the task's working directory, as far as the backend
+  removes it (see [The teardown executor](#the-teardown-executor)). Removing a file doesn't overwrite
+  its blocks on the disk, and copies that the task's executors make
+  outside the volume stay.
 
 Use the plugin only with TES backends that you trust with the decrypted
 data and the keys, e.g., in a trusted research environment.
@@ -231,6 +298,8 @@ FOCA's plugin engine:
   inputs but no key.
 - The image is a setting, built from this repository, instead of a fixed
   image.
+- A teardown executor empties the volume after the task's own
+  executors (`teardown`).
 
 ## Installation
 
