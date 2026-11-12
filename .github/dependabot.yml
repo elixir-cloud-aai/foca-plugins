@@ -46,6 +46,33 @@ updates:
     groups:
       crypt4gh-image:
         patterns: ["*"]
+  # The images of the end-to-end test of `tes.data.crypt4gh`: the base
+  # images of `Dockerfile.protes` and `Dockerfile.funnel` (proTES, uv,
+  # Funnel, the Docker CLI) and the images of `compose.yaml` (MongoDB,
+  # RabbitMQ), by tag and digest
+  - package-ecosystem: docker
+    directory: /plugins/tes/data/crypt4gh/e2e
+    labels: ["type: dependencies"]
+    schedule:
+      interval: monthly
+    target-branch: dev
+    groups:
+      crypt4gh-e2e-images:
+        patterns: ["*"]
+  - package-ecosystem: docker-compose
+    directory: /plugins/tes/data/crypt4gh/e2e
+    labels: ["type: dependencies"]
+    schedule:
+      interval: monthly
+    target-branch: dev
+    # Major versions by hand, as in proTES (e.g., MongoDB 8.0 refuses to
+    # start on some Linux kernels)
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      crypt4gh-e2e-compose:
+        patterns: ["*"]
   # Actions in the workflows
   - package-ecosystem: github-actions
     directory: /

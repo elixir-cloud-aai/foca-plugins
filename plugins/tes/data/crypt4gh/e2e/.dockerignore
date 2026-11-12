@@ -1,0 +1,4 @@
+# Build context of the images of the end-to-end test (`Dockerfile.protes`,
+# `Dockerfile.funnel`): they need no files of this directory (the wheel of
+# the plugin comes from the build context `wheels`), so none go into it
+*

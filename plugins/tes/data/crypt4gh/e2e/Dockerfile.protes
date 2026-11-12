@@ -1,0 +1,19 @@
+# proTES with the plugin, for the end-to-end test (`compose.yaml`): the
+# published image of a proTES release, by digest, with the wheel of the
+# plugin as built from this checkout by `check.sh` (build context `wheels`).
+# Installed without dependencies, as the image has them (FOCA, pydantic),
+# and checked with `uv pip check`; uv is mounted, so that the image doesn't
+# contain it. NOT the recipe for deployments: see "Plugin images" in the
+# docs of proTES
+FROM ghcr.io/astral-sh/uv:0.12.13@sha256:b485bd65cc2cf1c9a93b3554012c9c3778cf7b1b5fd3d3096ce9e1226c97e1e6 AS uv
+
+FROM docker.io/elixircloud/protes:0.6.0@sha256:f9a6c5bb077f1744d0e3e4d4dcfc085d0703223761295d1b28f67833db01322a
+USER root
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=from=wheels,target=/wheels \
+    export UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never && \
+    uv pip install --system --no-deps --offline \
+        /wheels/foca_plugin_tes_data_crypt4gh-*.whl && \
+    uv pip check --system
+# The user of the base image
+USER 1000

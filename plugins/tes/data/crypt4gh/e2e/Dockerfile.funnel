@@ -1,0 +1,7 @@
+# Funnel for the end-to-end test (`compose.yaml`), as in the integration
+# test of proTES: the official image of Funnel (0.11.14) has no Docker CLI,
+# which it needs to run the executors of tasks as sibling containers
+FROM docker:28.3.3-cli@sha256:0135662b510037ea581d99c2e5929c5e01185139c0b86986a418bd4da0b98a44 AS cli
+
+FROM quay.io/ohsu-comp-bio/funnel:0.11.14@sha256:8e10ba4de436b058bed95427110d9fe947142162078274a6a91cfe3b3eb8d15a
+COPY --from=cli /usr/local/bin/docker /usr/local/bin/docker

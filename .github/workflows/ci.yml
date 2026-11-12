@@ -345,17 +345,50 @@ jobs:
           upload: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
           # The plugin of the image (cf. `IMAGES` in `scripts/release.py`)
           fail: ${{ contains(fromJSON(needs.changes.outputs.packages).*.name, 'foca-plugin-tes-data-crypt4gh') }}
+  # The end-to-end test of `tes.data.crypt4gh`
+  # (`plugins/tes/data/crypt4gh/e2e/check.sh`): proTES (a release image, with
+  # the plugin of this commit) sends tasks with Crypt4GH inputs, served over
+  # HTTP, to Funnel, a real TES backend, in Docker Compose; the decryption
+  # image is built from this commit. Checks the decrypted content, the
+  # teardown, a failing decryption and `teardown_on_error`. Pinned images,
+  # from public registries; needs no credentials, so it runs the same for
+  # pull requests from forks. Only if the plugin is affected (job `changes`;
+  # the gate allows the skip)
+  e2e:
+    name: End-to-end test
+    needs: changes
+    if: ${{ contains(fromJSON(needs.changes.outputs.packages).*.name, 'foca-plugin-tes-data-crypt4gh') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # For the wheel of the plugin, which the test builds with uv
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      # The uv version's checksum is verified by the action
+      - name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+      # Shows the logs of proTES and Funnel if it fails, and removes the stack
+      - name: Run end-to-end test
+        run: plugins/tes/data/crypt4gh/e2e/check.sh
   # The only required check: passes if every other job passed, or was skipped
   # where that is intended: `test` if no plugin is affected (the matrix would
-  # be empty), `title` on pushes and for Dependabot. Any other result
-  # (failure, cancelled, or an unintended skip) fails it. Add every new job
-  # to `needs`
+  # be empty), `e2e` if `tes.data.crypt4gh` isn't, `title` on pushes and for
+  # Dependabot. Any other result (failure, cancelled, or an unintended skip)
+  # fails it. Add every new job to `needs`
   passed:
     name: CI passed
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
-    needs: [title, changes, lint, test, scripts, docs, smoke]
+    needs: [title, changes, lint, test, scripts, docs, smoke, e2e]
     steps:
       - name: Check results of all jobs
         env:
@@ -363,10 +396,14 @@ jobs:
         run: |
           failed="$(jq -r '
             (.changes.outputs.packages == "[]") as $none
+            | ((try (.changes.outputs.packages | fromjson) catch [])
+                | any(.name? == "foca-plugin-tes-data-crypt4gh")) as $crypt4gh
             | to_entries[]
             | select(
                 .value.result == "success"
                 or (.value.result == "skipped" and .key == "test" and $none)
+                or (.value.result == "skipped" and .key == "e2e"
+                    and ($crypt4gh | not))
                 or (.value.result == "skipped" and .key == "title")
                 | not)
             | "\(.key): \(.value.result)"' <<< "${NEEDS}")"

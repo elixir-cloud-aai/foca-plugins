@@ -153,10 +153,13 @@ support it (as of the sources of Funnel and TESK in November 2026):
 
 - The task's next executors run after one of them fails, also those that
   need the failed executor's results.
-- The task no longer ends with `EXECUTOR_ERROR` when one of its own
+- The task may no longer end with `EXECUTOR_ERROR` when one of its own
   executors fails: TES says that the backend records the exit code and
-  goes on; Funnel then reports the task as `COMPLETE` if the teardown
-  succeeds. Clients must check the exit codes in the executor logs.
+  goes on. The final state differs between backends: the current sources
+  of Funnel report the task as `COMPLETE` if the teardown succeeds, while
+  Funnel 0.11.14 (the image that the [end-to-end test](#end-to-end-test)
+  runs) still ends it with `EXECUTOR_ERROR`, after running the teardown. Clients must check the exit codes in the executor
+  logs.
 - TESK accepts only `ignore_error: false` and refuses other tasks with
   `400 Bad Request`: don't set `teardown_on_error` with TESK backends.
 - Backends that implement TES 1.0, which has no `ignore_error`, may ignore
@@ -331,6 +334,39 @@ docker build -f plugins/tes/data/crypt4gh/image/Dockerfile \
   -t crypt4gh-decrypt:dev plugins/tes/data/crypt4gh
 plugins/tes/data/crypt4gh/image/smoke.sh crypt4gh-decrypt:dev
 ```
+
+### End-to-end test
+
+[`e2e/check.sh`](e2e/check.sh) runs the plugin end to end, as CI does (job
+`e2e`): proTES 0.6.0 (its release image, with the plugin's wheel built from
+the checkout) sends tasks to Funnel 0.11.14, a real TES backend, in Docker
+Compose ([`e2e/compose.yaml`](e2e/compose.yaml)). Their inputs, a Crypt4GH
+file and a secret key made in the test with the decryption image (also built
+from the checkout), are served over HTTP, and Funnel downloads them as from
+any server. It checks that:
+
+1. a task completes, its executor reads the decrypted content, and the
+   teardown executor leaves the volume of the decrypted files empty;
+2. a failing decryption (no key for one of two files) fails the task before
+   its own executors run, and leaves no decrypted files;
+3. without `teardown_on_error`, a failing executor of the task stops it
+   before the teardown, and the decrypted file stays in the volume (until
+   the backend removes the task's working directory, see [The teardown
+   executor](#the-teardown-executor));
+4. with `teardown_on_error`, the teardown runs after the failing executor
+   and empties the volume.
+
+Funnel keeps the tasks' working directories in the test, so that it can
+check the volume on the host. TESK refuses tasks with `ignore_error: true`,
+so `teardown_on_error` is tested with Funnel only, and the test has no TESK
+variant. It needs Docker with Compose, uv, curl and jq, but no credentials:
+
+```bash
+plugins/tes/data/crypt4gh/e2e/check.sh
+```
+
+It removes the stack, the task containers and its work directory when it
+ends; see "Contributing" in the docs for its settings.
 
 ## Changelog
 
