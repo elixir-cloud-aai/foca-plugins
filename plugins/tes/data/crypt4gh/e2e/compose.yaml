@@ -6,8 +6,11 @@
 # containers through the Docker socket of the host, so its work directory
 # (`E2E_WORK_DIR`/funnel) has the same path in Funnel and on the host. Only
 # proTES is published, on the host's loopback interface (`E2E_PORT`).
-# MongoDB and RabbitMQ as in the integration test of proTES. The project
-# name is set per run by `check.sh` (`COMPOSE_PROJECT_NAME`)
+# MongoDB and RabbitMQ as in the integration test of proTES. The services
+# talk on an internal network (`stack`), which the host can't reach, so
+# that Funnel's API, which has no authentication, is reachable from the
+# stack only; images are pulled by the Docker daemon, not through it. The
+# project name is set per run by `check.sh` (`COMPOSE_PROJECT_NAME`)
 
 x-protes: &protes
   image: foca-plugins-e2e-protes:local
@@ -25,6 +28,7 @@ x-protes: &protes
   volumes:
     - ./config.yaml:/e2e/config.yaml:ro
     - ./config-on-error.yaml:/e2e/config-on-error.yaml:ro
+  networks: [stack]
   depends_on:
     mongodb:
       condition: service_healthy
@@ -35,8 +39,10 @@ x-protes: &protes
 
 services:
 
+  # The only service on a network with a gateway, for its published port
   protes:
     <<: *protes
+    networks: [stack, published]
     ports:
       - "127.0.0.1:${E2E_PORT:-18080}:8080"
 
@@ -53,6 +59,7 @@ services:
   # The identity provider and the files, in the image of proTES (Python,
   # PyJWT and cryptography)
   services:
+    networks: [stack]
     image: foca-plugins-e2e-protes:local
     pull_policy: build
     build:
@@ -71,6 +78,7 @@ services:
       start_period: 5s
 
   funnel:
+    networks: [stack]
     image: foca-plugins-e2e-funnel:local
     pull_policy: build
     build:
@@ -97,6 +105,7 @@ services:
       start_period: 5s
 
   rabbitmq:
+    networks: [stack]
     image: docker.io/library/rabbitmq:4.3.7@sha256:6c988780c85e08b7f12395973b89bda8fb3fe2f656498a74b1479a37f9903e48
     hostname: rabbitmq
     environment:
@@ -113,6 +122,7 @@ services:
       start_period: 10s
 
   mongodb:
+    networks: [stack]
     image: docker.io/library/mongo:7.0.25@sha256:82db6c6c8103eee46ca820c190742b7c280d02d6f993903a603cec9d56be374b
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
@@ -127,3 +137,10 @@ configs:
   rabbitmq-foca:
     content: |
       deprecated_features.permit.transient_nonexcl_queues = true
+
+networks:
+  # No gateway, and no route from or to the host
+  stack:
+    internal: true
+  # For the published port of proTES only
+  published:

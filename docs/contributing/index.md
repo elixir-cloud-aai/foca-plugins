@@ -81,22 +81,29 @@ plugins/tes/data/crypt4gh/e2e/check.sh
 
 It builds the decryption image and the plugin's wheel, starts the stack,
 runs the tasks, and removes the stack, the task containers and its work
-directory when it ends, but not the images. Settings (environment
-variables): `E2E_PORT`, the port of proTES on `127.0.0.1` (default
-`18080`), which also names the Compose project
-(`foca-plugins-e2e-<port>`), so that runs of the same checkout with
-different ports and work directories can run side by side (runs of
-different checkouts can't: they share the tags of the images that they
-build); `E2E_WORK_DIR`, the work directory, an
-absolute path that the Docker daemon can mount (default
-`/tmp/foca-plugins-e2e`; the test creates it and removes it at the end,
-and refuses an existing directory that an earlier run didn't create);
-`E2E_WAIT`, the seconds to wait for each task (default 180). Pass an image
-to test it instead of building one (e.g., `check.sh
-crypt4gh-decrypt:dev`). With a bad work directory (e.g., a symbolic
-link, one of another user, or one with `:` in its path), or without
-Docker, Docker Compose, uv, curl or jq, it exits with status 2 before
-starting anything.
+directory when it ends, but not the images; if something remains, a test
+that passed fails. Only proTES is published (on `127.0.0.1`): the other
+services, Funnel's API among them, which has no authentication, are on an
+internal Compose network that the host can't reach. Settings (environment
+variables):
+
+- `E2E_PORT`: the port of proTES on `127.0.0.1` (default `18080`). It
+  also names the Compose project (`foca-plugins-e2e-<port>`), so that
+  runs of the same checkout with different ports and work directories can
+  run side by side. Runs of different checkouts can't, as they share the
+  tags of the images that they build.
+- `E2E_WORK_DIR`: the work directory, a normalized absolute path that the
+  Docker daemon can mount (default `/tmp/foca-plugins-e2e`). The test
+  creates it and removes it at the end. It refuses an existing directory
+  that an earlier run didn't create (without its marker file, of another
+  user, or a symbolic link), a directory inside the work directory of
+  another run, and paths with `.` or `..` components or `:`.
+- `E2E_WAIT`: the seconds to wait for each task (default 180).
+
+Pass an image to test it instead of building one (e.g., `check.sh
+crypt4gh-decrypt:dev`). With a bad work directory, or without Docker,
+Docker Compose, uv, curl or jq, it exits with status 2 before starting
+anything.
 
 Dependabot updates the base images of the test's Dockerfiles (proTES, uv,
 Funnel, the Docker CLI), and the minor and patch versions of the images of

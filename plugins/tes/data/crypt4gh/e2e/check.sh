@@ -77,6 +77,12 @@ case "${E2E_WORK_DIR}" in
     exit 2
     ;;
 esac
+# A normalized path (no `.`, `..` or empty components), so that it names
+# the directory that is emptied, not one of its parents
+if [[ "$(realpath -ms -- "${E2E_WORK_DIR}")" != "${E2E_WORK_DIR}" ]]; then
+  echo "E2E_WORK_DIR must be a normalized path, not ${E2E_WORK_DIR}" >&2
+  exit 2
+fi
 # An existing work directory only if an earlier run made it: the runner's
 # own, no symbolic link, with the marker
 if [[ -L "${E2E_WORK_DIR}" ]] ||
@@ -84,6 +90,15 @@ if [[ -L "${E2E_WORK_DIR}" ]] ||
   echo "E2E_WORK_DIR ${E2E_WORK_DIR} exists, but wasn't made by this test" >&2
   exit 2
 fi
+# Not inside the work directory of another run, which would remove it
+parent="$(dirname "${E2E_WORK_DIR}")"
+while [[ "${parent}" != / ]]; do
+  if [[ -e "${parent}/.foca-plugins-e2e" ]]; then
+    echo "E2E_WORK_DIR ${E2E_WORK_DIR} is inside the work directory of another run (${parent})" >&2
+    exit 2
+  fi
+  parent="$(dirname "${parent}")"
+done
 for tool in docker uv curl jq; do
   command -v "${tool}" > /dev/null || {
     echo "The end-to-end test needs ${tool}" >&2
@@ -104,13 +119,15 @@ fail() {
   exit 1
 }
 
-# The files that containers wrote are root's: removed by a container, too
+# The files that containers wrote are root's: removed by a container, too.
+# Fails if the directory remains
 remove_work_dir() {
   if [[ -f "${marker}" ]]; then
     docker run --rm -v "${E2E_WORK_DIR}:/work" "${image}" \
       find /work -mindepth 1 -delete || true
     rm -rf "${E2E_WORK_DIR}" || true
   fi
+  [[ ! -e "${E2E_WORK_DIR}" ]]
 }
 
 # The task containers of this run (Funnel's, with the label of `funnel.yaml`
@@ -126,24 +143,28 @@ task_containers() {
   done
 }
 
-# Runs with errors ignored, so that every step runs and the status of the
-# test is kept
+# Runs every step, also after errors; keeps the status of a failed test, and
+# fails a passed one if something remains
 cleanup() {
-  local status=$?
+  local status=$? left=()
   set +e
   if [[ "${status}" != 0 ]]; then
     docker compose logs --no-color protes protes-worker funnel
   fi
-  docker compose down --volumes --remove-orphans
-  task_containers | xargs -r docker rm -f
-  remove_work_dir
+  docker compose down --volumes --remove-orphans || left+=("the Compose stack")
+  task_containers | xargs -r docker rm -f || left+=("task containers")
+  remove_work_dir || left+=("the work directory ${E2E_WORK_DIR}")
   rm -f "${body}"
+  if [[ "${#left[@]}" -gt 0 ]]; then
+    echo "::error::Cleanup failed, check: ${left[*]}" >&2
+    [[ "${status}" != 0 ]] || status=1
+  fi
   exit "${status}"
 }
 body="$(mktemp)"
 trap cleanup EXIT
 
-remove_work_dir
+remove_work_dir || fail "Can't remove ${E2E_WORK_DIR}"
 mkdir -p "${E2E_WORK_DIR}"
 touch "${marker}"
 mkdir -p "${E2E_WORK_DIR}/wheels" "${E2E_WORK_DIR}/data" "${E2E_WORK_DIR}/funnel"
