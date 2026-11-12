@@ -5,17 +5,24 @@
 # this repository, its version on the tagged commit, not the example plugin)
 # and the commit against `main`; CI must have passed for the commit (job
 # `prepare`, which then builds the distributions). Then it builds the
-# distributions with pinned tools (`prepare`), attests their build provenance
-# (`attest`; GitHub artifact attestations), releases them to PyPI (`pypi`)
+# distributions with pinned tools (`prepare`) and attests their build
+# provenance (`attest`; GitHub artifact attestations). A package with an
+# image (`tes.data.crypt4gh`: the decryption image) then gets it built and
+# pushed by digest, untagged (`push`), the digest scanned and smoke tested
+# without credentials (`scan`), and only then attested, signed and tagged
+# with the version (`image`); packages without an image skip these jobs.
+# Then it releases the distributions to PyPI (`pypi`)
 # with trusted publishing (no API token; each PyPI project trusts this
 # workflow file in the `release` environment) and PEP 740 attestations, and
 # creates the GitHub release (`publish`) with the notes of the package's
-# `CHANGELOG.md` and its commits since its previous tag. No manual steps: "Re-run failed jobs" completes a partially
-# failed release with the distributions of the first attempt. Never use
+# `CHANGELOG.md` and its commits since its previous tag. No manual steps:
+# "Re-run failed jobs" completes a partially failed release with the
+# distributions and the image digest of the first attempt. Never use
 # "Re-run all jobs": it builds again, and sdists aren't reproducible (the
 # build backend stores file times), so PyPI and the GitHub release would get
-# different files. Every job works on the pushed commit (`github.sha`), not
-# on the tag, and fails if the tag no longer points to it before publishing
+# different files (and the image tag a new digest, which `image` refuses).
+# Every job works on the pushed commit (`github.sha`), not on the tag, and
+# fails if the tag no longer points to it before publishing
 
 name: Release
 
@@ -30,6 +37,11 @@ permissions:
 env:
   # As in `ci.yml` (update both together)
   UV_VERSION: "0.12.13"
+  # The Docker Hub organization of the images: the repository variable
+  # `DOCKERHUB_ORG` (by default `elixircloud`, as in cloud-registry), so
+  # that forks publish to their own organization (set it before pushing a
+  # test tag). Fully qualified (`docker.io/`), as the attestation needs it
+  IMAGE_REGISTRY: docker.io/${{ vars.DOCKERHUB_ORG || 'elixircloud' }}
 
 # One run per tag, so that tags pushed together (at most 3 per `git push`:
 # GitHub creates no events for more) are all released; re-runs of a tag wait
@@ -51,6 +63,7 @@ jobs:
       name: ${{ steps.package.outputs.name }}
       version: ${{ steps.package.outputs.version }}
       prerelease: ${{ steps.package.outputs.prerelease }}
+      image: ${{ steps.image.outputs.image }}
     steps:
       # The pushed commit (`github.sha`), not the tag, which may have moved
       - name: Check out repository
@@ -86,6 +99,33 @@ jobs:
           else
               echo "prerelease=false" >> "${GITHUB_OUTPUT}"
           fi
+      # The image of the package, built from `<package>/image/Dockerfile`
+      # with the package's directory as the build context, or none. The
+      # Docker Hub repository of each image is created by the maintainer
+      # before the package's first release with it. A package with a
+      # Dockerfile but no image name here fails, so that no image is left
+      # out of a release by mistake
+      - name: Determine image
+        id: image
+        env:
+          NAME: ${{ steps.package.outputs.name }}
+          PACKAGE: ${{ steps.package.outputs.path }}
+        run: |
+          case "${NAME}" in
+              foca-plugin-tes-data-crypt4gh)
+                  image="${IMAGE_REGISTRY}/foca-plugin-tes-data-crypt4gh-decrypt" ;;
+              *)
+                  image="" ;;
+          esac
+          if [[ -n "${image}" && ! -f "${PACKAGE}/image/Dockerfile" ]]; then
+              echo "::error::${NAME} has an image name, but no ${PACKAGE}/image/Dockerfile"
+              exit 1
+          fi
+          if [[ -z "${image}" && -e "${PACKAGE}/image/Dockerfile" ]]; then
+              echo "::error::${PACKAGE}/image/Dockerfile has no image name in release.yml (step 'Determine image')"
+              exit 1
+          fi
+          echo "image=${image}" >> "${GITHUB_OUTPUT}"
       # Guards against accidental releases from unmerged commits. The `release`
       # environment's protection rules are what actually control publishing
       - name: Check release commit
@@ -199,12 +239,217 @@ jobs:
           # No artifact metadata storage record (needs another permission)
           create-storage-record: false
 
+  # The package's image (`prepare`, step "Determine image"; skipped for
+  # packages without one), built from the pushed commit once and pushed by
+  # digest only (untagged, with SBOM and provenance attestations), for
+  # `scan` to scan and `image` to sign and tag, as cloud-registry's release
+  # images. Digests of runs that fail (or fail the scan) are never signed or
+  # tagged, but stay on Docker Hub, untagged (pullable by digest only).
+  # Linux/amd64 only, as in CI
+  push:
+    name: Push release image
+    needs: prepare
+    if: ${{ needs.prepare.outputs.image != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Docker Hub secrets
+    environment: release
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to Docker Hub
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.DOCKERHUB_LOGIN }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # Only the labels of the release (version and commit): the others are
+      # those of the Dockerfile
+      - name: Build and push image by digest
+        id: push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ needs.prepare.outputs.path }}
+          file: ${{ needs.prepare.outputs.path }}/image/Dockerfile
+          platforms: linux/amd64
+          outputs: type=image,name=${{ needs.prepare.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+          sbom: true
+          provenance: mode=max
+          labels: |
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  # Scans exactly the pushed digest (`<image>@<digest>`; public, so pulling it
+  # needs no login) with Trivy (shared action
+  # `elixir-cloud-aai/.github/actions/scan-image`; fails on fixable critical
+  # and high vulnerabilities, except those accepted in `.trivyignore.yaml`),
+  # so that vulnerabilities published since CI scanned the commit block the
+  # release, and runs the image's smoke test (`<package>/image/smoke.sh`, if
+  # there is one) on it, as CI does on its build. Kept apart from `push` and
+  # `image`, so that Trivy (whose binary is resolved from its release tag at
+  # run time) and the image never run next to the Docker Hub credentials or
+  # the signing identity. CI uploads the results to code scanning
+  scan:
+    name: Scan release image
+    needs: [prepare, push]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check image digest
+        env:
+          DIGEST: ${{ needs.push.outputs.digest }}
+        run: |
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Invalid image digest '${DIGEST}'"
+              exit 1
+          fi
+      - name: Scan image
+        uses: elixir-cloud-aai/.github/actions/scan-image@743e82d290a53768454999e413756a924e383259 # v1.0.0
+        with:
+          image: ${{ needs.prepare.outputs.image }}@${{ needs.push.outputs.digest }}
+          category: release
+          upload: "false"
+      - name: Run smoke test
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}@${{ needs.push.outputs.digest }}
+          PACKAGE: ${{ needs.prepare.outputs.path }}
+        run: |
+          if [[ -f "${PACKAGE}/image/smoke.sh" ]]; then
+              "${PACKAGE}/image/smoke.sh" "${IMAGE}"
+          else
+              echo "::notice::${PACKAGE}/image/smoke.sh doesn't exist; no smoke test"
+          fi
+
+  # Attests the build provenance of the scanned digest (GitHub artifact
+  # attestation, also pushed to the registry), signs it (Sigstore keyless
+  # signing with the workflow's OIDC identity, `cosign`) and only then tags
+  # exactly that digest with the package's version (`X.Y.Z`; no `latest`:
+  # operators set the image by digest or version), so that the published
+  # image is the scanned one; before PyPI, so that a release on PyPI always
+  # has its image. Re-runs of failed jobs sign and tag the same digest
+  # again (no change); a version tag that points to another digest (e.g.,
+  # after "Re-run all jobs") fails the job, as published tags must not move
+  image:
+    name: Release image
+    needs: [prepare, push, scan]
+    if: ${{ needs.prepare.outputs.image != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Docker Hub secrets
+    environment: release
+    permissions:
+      contents: read
+      id-token: write # Sigstore signing certificates
+      attestations: write # GitHub artifact attestations
+    env:
+      IMAGE: ${{ needs.prepare.outputs.image }}
+      DIGEST: ${{ needs.push.outputs.digest }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Check image digest
+        run: |
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Invalid image digest '${DIGEST}'"
+              exit 1
+          fi
+      # The tag must still name the commit that was built (cf. job `pypi`)
+      - name: Check tag
+        env:
+          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.server_url }}/${{ github.repository }}.git
+        run: |
+          refs="$(git ls-remote --tags "${REPOSITORY}" "refs/tags/${TAG}" "refs/tags/${TAG}^{}")"
+          # Annotated tags: the commit is the peeled ref (`^{}`)
+          commit="$(awk -v ref="refs/tags/${TAG}^{}" '$2 == ref { print $1 }' <<< "${refs}")"
+          if [[ -z "${commit}" ]]; then
+              commit="$(awk -v ref="refs/tags/${TAG}" '$2 == ref { print $1 }' <<< "${refs}")"
+          fi
+          if [[ "${commit}" != "${GITHUB_SHA}" ]]; then
+              echo "::error::${TAG} points to '${commit}', not to the built commit ${GITHUB_SHA}"
+              exit 1
+          fi
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to Docker Hub
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.DOCKERHUB_LOGIN }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # Before anything is attested or signed: only a missing tag or one of
+      # this digest may be (re)tagged; other errors fail the step
+      - name: Check version tag
+        run: |
+          tag="${IMAGE}:${VERSION}"
+          if manifest="$(docker buildx imagetools inspect "${tag}" \
+              --format '{{ json .Manifest }}' 2> "${RUNNER_TEMP}/inspect.err")"; then
+              actual="$(jq -r .digest <<< "${manifest}")"
+              if [[ "${actual}" != "${DIGEST}" ]]; then
+                  echo "::error::${tag} points to ${actual} already, not to ${DIGEST}; published tags don't move: release a new version"
+                  exit 1
+              fi
+              echo "::notice::${tag} points to ${DIGEST} already"
+          elif grep -qi "not found" "${RUNNER_TEMP}/inspect.err"; then
+              echo "${tag} doesn't exist yet"
+          else
+              cat "${RUNNER_TEMP}/inspect.err" >&2
+              exit 1
+          fi
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ env.DIGEST }}
+          push-to-registry: true
+          # No artifact metadata storage record (needs another permission)
+          create-storage-record: false
+      - name: Install cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      # The signature covers the digest, and so every tag of it
+      - name: Sign image
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+      # The tag points to the checked, scanned and signed digest: a single
+      # source is copied as is
+      - name: Tag image
+        run: |
+          tag="${IMAGE}:${VERSION}"
+          docker buildx imagetools create --tag "${tag}" "${IMAGE}@${DIGEST}"
+          actual="$(docker buildx imagetools inspect "${tag}" \
+              --format '{{ json .Manifest }}' | jq -r .digest)"
+          if [[ "${actual}" != "${DIGEST}" ]]; then
+              echo "::error::${tag} points to ${actual}, expected ${DIGEST}"
+              exit 1
+          fi
+
   # As in FOCA. The pending trusted publisher of each PyPI project names this
   # workflow file (`release.yml`) and the environment `release`; renaming
   # either breaks publishing until the maintainer updates PyPI
+  # After the package's image, if it has one (`image` must have succeeded);
+  # for packages without one, `push`, `scan` and `image` are skipped, which a
+  # job's default condition would treat as a failure of its dependencies
   pypi:
     name: Release package
-    needs: [prepare, attest]
+    needs: [prepare, attest, image]
+    if: >-
+      ${{ !cancelled()
+        && needs.prepare.result == 'success'
+        && needs.attest.result == 'success'
+        && (needs.image.result == 'success'
+          || (needs.image.result == 'skipped' && needs.prepare.outputs.image == '')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
@@ -248,6 +493,9 @@ jobs:
   publish:
     name: Publish release
     needs: [prepare, pypi]
+    # `pypi` has a condition of its own; this job runs only once it released
+    # the package (skipped jobs before it would skip this one by default)
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.pypi.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

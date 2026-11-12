@@ -111,20 +111,45 @@ executors run once each, in order.
 
 ### The decryption image
 
-The image is built from [`image/Dockerfile`](image/Dockerfile) (Python 3.13,
-`crypt4gh` from [`image/requirements.txt`](image/requirements.txt), pinned
-with hashes, `linux/amd64`), with the plugin's directory as the build
-context:
+Each release of the plugin publishes its image on Docker Hub, as
+[`elixircloud/foca-plugin-tes-data-crypt4gh-decrypt`](https://hub.docker.com/r/elixircloud/foca-plugin-tes-data-crypt4gh-decrypt),
+tagged with the plugin's version (e.g., `0.1.0`; there is no `latest`).
+Use the image of the plugin version that you install, and set `image` to
+it by digest, which Docker Hub shows for the tag, as does:
 
 ```bash
-docker build -f image/Dockerfile -t <registry>/<name>:<tag> plugins/tes/data/crypt4gh
+docker buildx imagetools inspect docker.io/elixircloud/foca-plugin-tes-data-crypt4gh-decrypt:<version>
 ```
 
-CI builds the image and runs [`image/smoke.sh`](image/smoke.sh) on it, but
-**doesn't publish it yet**: build it, scan it and push it to a registry that
-your TES backends can pull from, and set `image` to it, best by digest. The
-image runs as root, as some TES implementations (e.g., Funnel with host
-directories) make the task's volumes writable for root only.
+Before the release workflow signs the image (Sigstore keyless signing, with
+the workflow's identity), attests its build provenance and tags it, it
+scans the image for known vulnerabilities and runs its smoke test on it.
+Verify the signature and the attestation before you use it:
+
+```bash
+image=docker.io/elixircloud/foca-plugin-tes-data-crypt4gh-decrypt@sha256:<digest>
+cosign verify "${image}" \
+  --certificate-identity-regexp '^https://github\.com/elixir-cloud-aai/foca-plugins/\.github/workflows/release\.yml@refs/tags/foca-plugin-tes-data-crypt4gh-v' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify "oci://${image}" --repo elixir-cloud-aai/foca-plugins
+```
+
+The image is built from [`image/Dockerfile`](image/Dockerfile) (Python 3.13,
+`crypt4gh` from [`image/requirements.txt`](image/requirements.txt), pinned
+with hashes, without pip, `linux/amd64`), with the plugin's directory as
+the build context. To build it yourself (e.g., for a registry that your TES backends
+can pull from, if they can't pull from Docker Hub), from the repository
+root:
+
+```bash
+docker build -f plugins/tes/data/crypt4gh/image/Dockerfile \
+  -t <registry>/<name>:<tag> plugins/tes/data/crypt4gh
+```
+
+CI builds the image for every pull request, runs
+[`image/smoke.sh`](image/smoke.sh) on it and scans it. The image runs as
+root, as some TES implementations (e.g., Funnel with host directories)
+make the task's volumes writable for root only.
 
 ## Configuration
 
@@ -139,7 +164,8 @@ plugins:
     tes.data.crypt4gh:
       distribution: foca-plugin-tes-data-crypt4gh
       config:
-        image: registry.example.org/crypt4gh-decrypt@sha256:<digest>
+        # The image of the installed plugin version, by digest
+        image: docker.io/elixircloud/foca-plugin-tes-data-crypt4gh-decrypt@sha256:<digest>
   pipeline:
     - id: decrypt
       alternatives:
