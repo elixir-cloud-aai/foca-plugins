@@ -2,14 +2,16 @@
 """Decryption executor of `tes.data.crypt4gh`: decrypt Crypt4GH files.
 
 Runs in the decryption image (`image/Dockerfile`), as the first executor of
-a task, never in the gateway: the image copies this file alone, so it uses
-the standard library and the `crypt4gh` package only (which the plugin
-doesn't depend on). Gateway-neutral: it gets paths only.
+a task and as its last (the teardown executor), never in the gateway: the
+image copies this file alone, so it uses the standard library and the
+`crypt4gh` package only (which the plugin doesn't depend on).
+Gateway-neutral: it gets paths only.
 
 Usage::
 
     crypt4gh-decrypt --key KEY [--key KEY ...]
         --file SOURCE TARGET [--file SOURCE TARGET ...]
+    crypt4gh-decrypt --remove TARGET [--remove TARGET ...]
 
 Each `SOURCE` (a Crypt4GH file) is decrypted with the secret keys (Crypt4GH
 or OpenSSH ed25519 keys without passphrase; a file decrypts with any of
@@ -19,6 +21,11 @@ are readable by all (0644), as the task's next executors may run as other
 users. If a key can't be read or a file can't be decrypted, the targets
 written so far are removed and the script exits with status 1, so that the
 task's own executors don't run.
+
+With `--remove`, the script removes each `TARGET` and the temporary files
+left next to it (e.g., by a decryption that was stopped); missing files
+are fine, so that it may run again. If a file can't be removed, it goes on
+with the others and exits with status 1.
 """
 
 import argparse
@@ -144,6 +151,43 @@ def remove(paths: Sequence[Path]) -> None:
             logger.warning("Can't remove %s: %s", path, error)
 
 
+def remove_targets(targets: Sequence[Path]) -> bool:
+    """Remove decrypted files and their temporary files, as far as possible.
+
+    Args:
+        targets: Paths of the decrypted files.
+
+    Returns:
+        Whether all of them, and all temporary files next to them (named
+        as by :py:func:`decrypt_file`), are gone; missing files count as
+        gone.
+    """
+    done = True
+    for target in targets:
+        prefix = f".{target.name}."
+        try:
+            leftovers = [
+                path for path in target.parent.iterdir() if path.name.startswith(prefix)
+            ]
+        except FileNotFoundError:
+            leftovers = []
+        except OSError as error:
+            logger.error("Can't list %s: %s", target.parent, error)
+            done = False
+            leftovers = []
+        for path in (target, *leftovers):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError as error:  # go on with the others
+                logger.error("Can't remove %s: %s", path, error)
+                done = False
+                continue
+            logger.info("Removed %s", path)
+    return done
+
+
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     """Parse the arguments.
 
@@ -152,46 +196,69 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
     Returns:
         Arguments `keys` (paths) and `files` (pairs of source and target
-        paths).
+        paths), or `remove` (paths of decrypted files); those not given are
+        `None`.
     """
     parser = argparse.ArgumentParser(
-        prog="crypt4gh-decrypt", description="Decrypt Crypt4GH files."
+        prog="crypt4gh-decrypt",
+        description="Decrypt Crypt4GH files, or remove decrypted files.",
     )
     parser.add_argument(
         "--key",
         dest="keys",
         action="append",
-        required=True,
         type=Path,
         metavar="KEY",
-        help="secret key (repeatable)",
+        help="secret key (repeatable; required with --file)",
     )
     parser.add_argument(
         "--file",
         dest="files",
         action="append",
-        required=True,
         nargs=2,
         type=Path,
         metavar=("SOURCE", "TARGET"),
         help="Crypt4GH file and path of the decrypted file (repeatable)",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--remove",
+        dest="remove",
+        action="append",
+        type=Path,
+        metavar="TARGET",
+        help="decrypted file to remove (repeatable; not with --key or --file)",
+    )
+    args = parser.parse_args(argv)
+    if args.remove:
+        if args.keys or args.files:
+            parser.error("--remove can't be combined with --key or --file")
+        return args
+    missing = [
+        option
+        for option, value in (("--key", args.keys), ("--file", args.files))
+        if not value
+    ]
+    if missing:
+        parser.error(f"the following arguments are required: {', '.join(missing)}")
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Decrypt the files of the arguments.
+    """Decrypt the files of the arguments, or remove decrypted files.
 
     Args:
         argv: Arguments; defaults to those of the command line.
 
     Returns:
-        Exit status: 0 if all files were decrypted, 1 otherwise.
+        Exit status: 0 if all files were decrypted (or removed), 1
+        otherwise.
     """
     # Warnings of `crypt4gh` only: its debug messages include key material
     logging.basicConfig(level=logging.WARNING, format="%(name)s: %(message)s")
     logger.setLevel(logging.INFO)
     args = parse_args(argv)
+    if args.remove:
+        return 0 if remove_targets(args.remove) else 1
     targets = [target for _, target in args.files]
     written: list[Path] = []
     try:

@@ -4,7 +4,9 @@
 # image's `crypt4gh` tools, then runs the decryption with the arguments that
 # the plugin's executor gets (several `--key` and `--file` options), with
 # the inputs mounted read-only and a read-only root file system, and checks
-# the decrypted files and their modes; and that a failure removes the files
+# the decrypted files and their modes; that the teardown (`--remove`, as the
+# plugin's teardown executor runs it) removes them and their temporary
+# files, also when run again; and that a failure removes the files
 # decrypted before it. Needs Docker; the image must be built.
 #
 # Usage: image/smoke.sh IMAGE
@@ -56,6 +58,17 @@ for name in alice bob; do
 done
 [[ "$(stat -c %a "${work}/vol/crypt4gh")" == 755 ]] ||
   fail "Directory of the decrypted files is not readable by all"
+
+# The teardown removes the decrypted files and a temporary file left by a
+# stopped decryption, keeps other files, and may run again
+docker run --rm -v "${work}/vol:/vol" "${image}" \
+  sh -euc 'echo partial > /vol/crypt4gh/.alice.txt.x1y2; echo keep > /vol/crypt4gh/other'
+for _ in 1 2; do
+  decrypt --remove /vol/crypt4gh/alice.txt --remove /vol/crypt4gh/bob.txt ||
+    fail "Teardown failed"
+done
+[[ "$(ls -A "${work}/vol/crypt4gh")" == other ]] ||
+  fail "Teardown left decrypted or temporary files, or removed others"
 
 # The second file is for a key that isn't given: the decryption fails, and
 # the first file, decrypted before, is removed

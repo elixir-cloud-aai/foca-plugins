@@ -4,8 +4,8 @@ The script runs in the decryption image; here, it runs in the test
 environment. Keys and Crypt4GH files are made for each test with the
 `crypt4gh` package (a development dependency), in a temporary directory:
 the repository holds no keys, so that secret scanners have nothing to
-report. The last test runs the script with the arguments of the executor
-that the plugin adds.
+report. The last test runs the script with the arguments of the decryption
+and teardown executors that the plugin adds.
 """
 
 from collections.abc import Callable
@@ -517,25 +517,161 @@ def test_keeps_permissions_of_foreign_directories(
     assert f"Can't change permissions of {out}" in caplog.text
 
 
-def test_needs_keys_and_files(capsys: pytest.CaptureFixture[str]) -> None:
-    """Keys and files are required arguments.
+@pytest.mark.parametrize(
+    ("argv", "missing"),
+    [
+        (["--key", "/in/alice.sec"], "--file"),
+        (["--file", "/in/a.c4gh", "/vol/a"], "--key"),
+        ([], "--key"),
+    ],
+)
+def test_needs_keys_and_files(
+    argv: list[str], missing: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Keys and files are required arguments, unless files are removed.
 
     Args:
+        argv: Arguments.
+        missing: Option that the error names.
         capsys: Captured output.
     """
     with pytest.raises(SystemExit) as raised:
-        decrypt.main(["--key", "/in/alice.sec"])
+        decrypt.main(argv)
     assert raised.value.code == 2
-    assert "--file" in capsys.readouterr().err
+    assert missing in capsys.readouterr().err
+
+
+def test_removes_targets(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """The teardown removes the targets and temporary files left next to them.
+
+    Missing targets and directories are fine, so that the teardown may run
+    again; other files are kept.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        caplog: Captured logs.
+    """
+    out = tmp_path / "out"
+    out.mkdir()
+    for name in ("one", ".one.x1y2", ".one.b.z3", "other", ".other.x"):
+        (out / name).write_bytes(b"data")
+    caplog.set_level(logging.INFO, logger="crypt4gh-decrypt")
+    targets = [out / "one", out / "two", tmp_path / "gone" / "x"]
+    argv = [arg for path in targets for arg in ("--remove", str(path))]
+    assert decrypt.main(argv) == 0
+    assert sorted(path.name for path in out.iterdir()) == [".other.x", "other"]
+    assert f"Removed {out / 'one'}" in caplog.text
+    assert decrypt.main(argv) == 0
+
+
+def test_fails_on_targets_that_cant_be_removed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Targets that the teardown can't remove are logged; status 1.
+
+    The other targets are removed all the same.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        monkeypatch: Patches `Path.unlink`.
+        caplog: Captured logs.
+    """
+    out = tmp_path / "out"
+    out.mkdir()
+    for name in ("one", ".one.x", "two"):
+        (out / name).write_bytes(b"data")
+    unlink = Path.unlink
+
+    def refuse(path: Path, missing_ok: bool = False) -> None:
+        """Refuse to remove the target `one` and its temporary file.
+
+        Args:
+            path: Path.
+            missing_ok: Whether a missing file is fine.
+
+        Raises:
+            PermissionError: The path is the target `one` or its temporary
+                file.
+        """
+        if path.name in ("one", ".one.x"):
+            raise PermissionError(os.strerror(13))
+        unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    status = decrypt.main(["--remove", str(out / "one"), "--remove", str(out / "two")])
+    assert status == 1
+    assert not (out / "two").exists()
+    assert f"Can't remove {out / 'one'}" in caplog.text
+    assert f"Can't remove {out / '.one.x'}" in caplog.text
+
+
+def test_fails_on_directories_that_cant_be_listed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A directory whose temporary files can't be listed fails the teardown.
+
+    The target is removed all the same.
+
+    Args:
+        tmp_path: Temporary directory of the test.
+        monkeypatch: Patches `Path.iterdir`.
+        caplog: Captured logs.
+    """
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "one").write_bytes(b"data")
+
+    def refuse(path: Path) -> None:
+        """Refuse to list directories.
+
+        Args:
+            path: Path.
+
+        Raises:
+            PermissionError: Always.
+        """
+        raise PermissionError(os.strerror(13))
+
+    monkeypatch.setattr(Path, "iterdir", refuse)
+    assert decrypt.main(["--remove", str(out / "one")]) == 1
+    assert not (out / "one").exists()
+    assert f"Can't list {out}" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--remove", "/vol/a", "--key", "/in/alice.sec"],
+        ["--remove", "/vol/a", "--file", "/in/a.c4gh", "/vol/a"],
+    ],
+)
+def test_refuses_removal_with_decryption(
+    argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Removal doesn't go with keys or files.
+
+    Args:
+        argv: Arguments.
+        capsys: Captured output.
+    """
+    with pytest.raises(SystemExit) as raised:
+        decrypt.main(argv)
+    assert raised.value.code == 2
+    assert "--remove" in capsys.readouterr().err
 
 
 def test_runs_executor_of_plugin(
     tmp_path: Path, alice: KeyPair, encrypt_file: Encrypt
 ) -> None:
-    """The executor that the plugin adds decrypts the files of the task.
+    """The executors that the plugin adds decrypt and remove the files.
 
     The paths of the task are those of the test's directory, so that the
-    script finds them; the task's own executor gets the decrypted file.
+    script finds them; the task's own executor gets the decrypted file,
+    which the teardown executor removes.
 
     Args:
         tmp_path: Temporary directory of the test.
@@ -562,3 +698,6 @@ def test_runs_executor_of_plugin(
     assert decrypt.main(executors[0]["command"][1:]) == 0
     assert Path(executors[1]["command"][1]).read_bytes() == b"hello"
     assert executors[1]["command"][1] == str(volume / "data.txt")
+    assert executors[2]["command"][:2] == ["crypt4gh-decrypt", "--remove"]
+    assert decrypt.main(executors[2]["command"][1:]) == 0
+    assert list(volume.iterdir()) == []
