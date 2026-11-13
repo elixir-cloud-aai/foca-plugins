@@ -1,13 +1,60 @@
-"""Cache with TTLs and a size limit, for lookups of the plugin."""
+"""Caches of the plugin's lookups.
+
+- :py:class:`TtlCache`: in the memory of the process, with TTLs and a size
+  limit (for host names, places and, with the offline provider, the
+  locations of addresses).
+- :py:class:`LocationCache`: what the plugin needs of a cache of
+  locations; :py:class:`TtlCache` and
+  :py:class:`~foca_plugins.tes.routing.distance.store.StoreCache` (in the
+  plugin store, for the online provider) have it.
+"""
 
 from collections import OrderedDict
 from collections.abc import Callable, Hashable
 import threading
 import time
-from typing import Generic, TypeVar
+from typing import Generic, Protocol, TypeVar
+
+from foca.plugins import Location
 
 K = TypeVar("K", bound=Hashable)
 V = TypeVar("V")
+
+
+class LocationCache(Protocol):
+    """Cache of the locations of addresses; `None` for misses."""
+
+    def get(self, key: str) -> tuple[bool, Location | None]:
+        """Get the cached location of an address.
+
+        Args:
+            key: Address.
+
+        Returns:
+            Whether the address is cached, and its location (`None` if not
+            cached or a miss).
+        """
+        ...  # pragma: no cover
+
+    def put(self, key: str, value: Location | None, ttl: float) -> None:
+        """Cache the location of an address.
+
+        Args:
+            key: Address.
+            value: Location; `None` for a miss.
+            ttl: Seconds to keep it; 0 keeps it not at all.
+        """
+        ...  # pragma: no cover
+
+    def add(self, key: str, value: Location | None, ttl: float) -> None:
+        """Cache the location of an address unless it is cached already.
+
+        Args:
+            key: Address.
+            value: Location; `None` for a miss.
+            ttl: Seconds to keep it; 0 keeps it not at all.
+        """
+        ...  # pragma: no cover
 
 
 class TtlCache(Generic[K, V]):

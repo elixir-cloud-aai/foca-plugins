@@ -155,8 +155,7 @@ class Crypt4gh(Plugin[Crypt4ghConfig, EmptyModel]):
         " Crypt4GH inputs as they are."
     )
     data_transfers = ()
-    # Nothing in the plugin store (listed by FOCA 0.19; declared here, as
-    # FOCA 0.18 has no such attribute)
+    # Nothing in the plugin store (listed in FOCA's plugin listing)
     data_stored = ()
 
     settings: Crypt4ghConfig

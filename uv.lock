@@ -1289,7 +1289,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.18.0,<0.23" },
+    { name = "foca", specifier = ">=0.19.0,<0.23" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 
@@ -1304,7 +1304,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.18.0,<0.23" },
+    { name = "foca", specifier = ">=0.19.0,<0.23" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 
@@ -1319,7 +1319,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.18.0,<0.23" },
+    { name = "foca", specifier = ">=0.19.0,<0.23" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 
@@ -1335,7 +1335,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.18.0,<0.23" },
+    { name = "foca", specifier = ">=0.19.0,<0.23" },
     { name = "maxminddb", specifier = ">=2.6,<4" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
@@ -1368,7 +1368,7 @@ tes-routing = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.18.0,<0.23" },
+    { name = "foca", specifier = ">=0.19.0,<0.23" },
     { name = "foca-plugin-generic-routing-random", marker = "extra == 'experimental'", editable = "plugins/generic/routing/random" },
     { name = "foca-plugin-generic-routing-random", marker = "extra == 'generic'", editable = "plugins/generic/routing/random" },
     { name = "foca-plugin-generic-routing-random", marker = "extra == 'generic-routing'", editable = "plugins/generic/routing/random" },

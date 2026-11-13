@@ -21,7 +21,7 @@ middleware of proTES.
 | Maturity | experimental |
 | Data transfers | none |
 | Data stored | none (no plugin store) |
-| FOCA | 0.18, 0.19, 0.20, 0.21, 0.22 (`>=0.18.0,<0.23`) |
+| FOCA | 0.19, 0.20, 0.21, 0.22 (`>=0.19.0,<0.23`) |
 
 ## What it does
 
