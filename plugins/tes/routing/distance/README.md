@@ -202,7 +202,8 @@ lookups. Each caller may make at most `dbip_user_daily_lookups` (100)
 uncached lookups per day (a fixed window from the caller's first lookup),
 counted in FOCA's plugin store by a hash of the caller's identity
 (`subject_type` and `subject`; all anonymous callers share one count, and
-a service client has one, whichever users it acts for); if the store
+a service client has one, whichever users it acts for; lookups that sent
+no request, e.g., while DB-IP is backed off, don't count); if the store
 fails, the call makes no lookups (the budget fails closed). Without a
 database, the counts are per process, so the limit is only approximate.
 These limits make it harder, but can't keep users from using up DB-IP's
@@ -245,7 +246,9 @@ of service for your use. Nominatim's data is © OpenStreetMap contributors
   addresses or identifiers as they are. They pseudonymize, but don't
   anonymize: the entries remain personal data, kept at most for the
   operator's `max_ttl` of the store. Clients see them in the plugin
-  listing (`data_stored`).
+  listing (`data_stored`). Set the key secret with `provider: dbip`:
+  without it, anyone who can read the database (or a backup) can recover
+  the addresses by hashing all IPv4 addresses.
 
 ## Installation
 

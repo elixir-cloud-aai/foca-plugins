@@ -266,11 +266,10 @@ class _Locator:
         except LookupFailed as exc:
             self.failed_lookups += 1
             self.ctx.log.warning("Lookup failed: %s", exc)
-            if exc.transient:
-                # no request was sent: the lookup doesn't count
-                if self.budget is not None:
-                    self.budget.give_back()
-            else:
+            if not exc.sent and self.budget is not None:
+                # no request was sent (e.g., backed off): it doesn't count
+                self.budget.give_back()
+            if not exc.transient:
                 # keeps a location that a concurrent call found meanwhile
                 self.cache.add(address, None, self.settings.cache_failure_ttl)
             return None

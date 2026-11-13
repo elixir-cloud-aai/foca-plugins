@@ -1064,19 +1064,32 @@ def test_online_budget_can_be_turned_off(
     assert store.get(store.key_for("dbip-lookups", "user", "user")) is None
 
 
+@pytest.mark.parametrize(
+    ("transient", "sent", "count"),
+    [(True, False, 0), (False, False, 0), (True, True, 1), (False, True, 1)],
+)
 def test_online_budget_is_not_spent_on_lookups_without_requests(
     world: list[Backend],
     addresses: dict[str, str],
     places: dict[str, Location],
     monkeypatch: pytest.MonkeyPatch,
+    transient: bool,
+    sent: bool,
+    count: int,
 ) -> None:
-    """Lookups that failed for lack of time are given back to the budget.
+    """Failed lookups that sent no request are given back to the budget.
+
+    E.g., for lack of time, or while DB-IP is backed off; failed lookups
+    that may have sent requests count.
 
     Args:
         world: Backends.
         addresses: Addresses in the networks of the test database.
         places: Places of the networks.
         monkeypatch: Pytest fixture.
+        transient: Whether the failure is transient.
+        sent: Whether the failed lookup may have sent a request.
+        count: Expected count of the caller's lookups.
     """
     harness = PluginHarness(
         Distance,
@@ -1094,9 +1107,9 @@ def test_online_budget_is_not_spent_on_lookups_without_requests(
             ctx: Context.
 
         Raises:
-            LookupFailed: Always (transient).
+            LookupFailed: Always.
         """
-        raise LookupFailed("no time", transient=True)
+        raise LookupFailed("no time", transient=transient, sent=sent)
 
     plugin = harness.plugin.instance
     assert isinstance(plugin, Distance)
@@ -1106,7 +1119,7 @@ def test_online_budget_is_not_spent_on_lookups_without_requests(
     assert execution.outcome == "not_applicable"
     assert execution.annotations["failed_lookups"] == 1
     store = harness.store
-    assert store.get(store.key_for("dbip-lookups", "user", "user")) == 0
+    assert store.get(store.key_for("dbip-lookups", "user", "user")) == count
 
 
 @pytest.mark.parametrize(("budget", "lookups", "calls"), [(5, 0, 0), (None, 4, 8)])

@@ -12,6 +12,13 @@ in the docs).
 ### Breaking changes
 
 - Require FOCA 0.19 (`foca>=0.19.0,<0.23`), for its plugin store (#21).
+- With `provider: dbip`, each caller now gets at most 100 uncached
+  lookups per day by default (`dbip_user_daily_lookups`; set `null` for
+  the earlier behaviour), and the plugin keeps locations and lookup counts
+  in FOCA's plugin store: with a database, in its collection
+  `plugin_store`, as personal data (hashed keys) for up to `cache_ttl` or a
+  day; set FOCA's `plugins.defaults.store.key_secret` and review
+  `max_ttl` before upgrading (#21).
 
 ### Features
 

@@ -223,10 +223,18 @@ class UserBudget:
         return True
 
     def give_back(self) -> None:
-        """Uncount a lookup that sent no request; failures leave it counted."""
+        """Uncount a lookup that sent no request; failures leave it counted.
+
+        Counters that expired (or were never positive) are left alone, so
+        that no new window starts below 0 (not atomic: a counter that
+        expires between the check and the decrement still does, rarely).
+        """
         if self.failed:
             return
         try:
+            count = self.store.get(self.key)
+            if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+                return
             self.store.increment(self.key, -1, ttl=BUDGET_WINDOW)
         except StoreError as exc:
             self.failed = True

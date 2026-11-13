@@ -41,10 +41,17 @@ class LookupFailed(Exception):
         transient: Whether the lookup failed only for lack of time in this
             call (e.g., a rate limit), so that it may succeed in the next
             call; such failures aren't cached.
+        sent: Whether the lookup may have sent a request to a service
+            (e.g., DB-IP), so that it counts towards the caller's budget.
     """
 
     def __init__(
-        self, message: str, status: int | None = None, *, transient: bool = False
+        self,
+        message: str,
+        status: int | None = None,
+        *,
+        transient: bool = False,
+        sent: bool = True,
     ) -> None:
         """Create the error.
 
@@ -52,10 +59,13 @@ class LookupFailed(Exception):
             message: Message, without addresses.
             status: HTTP status of the response, if any.
             transient: Whether the lookup failed only for lack of time.
+            sent: Whether the lookup may have sent a request; `False` only
+                if it certainly didn't.
         """
         super().__init__(message)
         self.status = status
         self.transient = transient
+        self.sent = sent
 
 
 class Provider(Protocol):
@@ -258,17 +268,19 @@ class DbipProvider:
             PluginError: The context has no HTTP client.
         """
         if self._closed:
-            raise LookupFailed("The provider is closed")
+            raise LookupFailed("The provider is closed", sent=False)
         http = ctx.http
         if http is None:
             raise PluginError("Provider 'dbip' needs ctx.http")
         turn: float | None = None
+        requested = False  # whether a request may have been sent
         try:
             cached, place = self._places.get(address)
             if not cached:
                 if self._clock() < self._blocked_until:
                     raise LookupFailed("DB-IP refused lookups recently; backing off")
                 turn = self._book(ctx)
+                requested = True
                 place = self._place(http, address)
                 self._places.put(address, place, self._ttl(place))
             if place is None:
@@ -282,11 +294,16 @@ class DbipProvider:
                 if not cached:
                     self._wait(self._book(ctx) if turn is None else turn)
                     turn = None
+                    requested = True
                     location = self._search(http, query)
                     self._searches.put(query, location, self._ttl(location))
                 if location is not None:
                     return location
             return None
+        except LookupFailed as exc:
+            if not requested:
+                exc.sent = False
+            raise
         finally:
             if turn is not None:
                 self._give_back(turn)
