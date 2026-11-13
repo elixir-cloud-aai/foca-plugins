@@ -269,7 +269,9 @@ class _Locator:
             if not exc.sent and self.budget is not None:
                 # no request was sent (e.g., backed off): it doesn't count
                 self.budget.give_back()
-            if not exc.transient:
+            if exc.sent and not exc.transient:
+                # only failures of services: not, e.g., this process's
+                # back-off, as the cache may be shared with other processes;
                 # keeps a location that a concurrent call found meanwhile
                 self.cache.add(address, None, self.settings.cache_failure_ttl)
             return None

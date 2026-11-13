@@ -1120,6 +1120,10 @@ def test_online_budget_is_not_spent_on_lookups_without_requests(
     assert execution.annotations["failed_lookups"] == 1
     store = harness.store
     assert store.get(store.key_for("dbip-lookups", "user", "user")) == count
+    # failures of services are cached (as misses) unless transient; others
+    # (e.g., back-off of the process) not, as other processes share the cache
+    cached = store.get(store.key_for("location", addresses["zurich"]))
+    assert cached == ([] if sent and not transient else None)
 
 
 @pytest.mark.parametrize(("budget", "lookups", "calls"), [(5, 0, 0), (None, 4, 8)])

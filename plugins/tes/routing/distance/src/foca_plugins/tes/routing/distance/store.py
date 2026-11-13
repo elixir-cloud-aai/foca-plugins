@@ -233,7 +233,7 @@ class UserBudget:
             return
         try:
             count = self.store.get(self.key)
-            if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+            if not isinstance(count, int) or count <= 0:
                 return
             self.store.increment(self.key, -1, ttl=BUDGET_WINDOW)
         except StoreError as exc:
