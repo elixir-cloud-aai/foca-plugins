@@ -206,6 +206,8 @@ a service client has one, whichever users it acts for; lookups that sent
 no request, e.g., while DB-IP is backed off, don't count); if the store
 fails, the call makes no lookups (the budget fails closed). Without a
 database, the counts are per process, so the limit is only approximate.
+The window is capped by the operator's `max_ttl` of the store: keep it at
+a day or more, or the limit holds per `max_ttl` instead of per day.
 These limits make it harder, but can't keep users from using up DB-IP's
 daily quota (e.g., several users together); distance routing then doesn't
 apply (the next alternative routes) until the quota resets. Use `offline`

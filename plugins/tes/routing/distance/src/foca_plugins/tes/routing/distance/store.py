@@ -17,7 +17,6 @@ again in that call.
 """
 
 import logging
-import math
 from typing import Any
 
 from foca.plugins import Location, Principal, Store, StoreError
@@ -48,12 +47,10 @@ def _location(value: Any) -> tuple[bool, Location | None]:
         return False, None
     latitude, longitude = value
     for number in value:
-        if (
-            isinstance(number, bool)
-            or not isinstance(number, int | float)
-            or not math.isfinite(number)
-        ):
+        if isinstance(number, bool) or not isinstance(number, int | float):
             return False, None
+    # also rejects NaN, infinities and integers too large for floats (which
+    # `math.isfinite()` can't convert)
     if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
         return False, None
     return True, Location(latitude=latitude, longitude=longitude)

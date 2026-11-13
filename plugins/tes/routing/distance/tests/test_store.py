@@ -10,7 +10,7 @@ from foca.plugins import Location, Principal, Store, StoreError
 from foca.plugins.store import MemoryStoreBackend, StoreSettings
 import pytest
 
-from foca_plugins.tes.routing.distance.store import StoreCache, UserBudget
+from foca_plugins.tes.routing.distance.store import StoreCache, UserBudget, _location
 
 LOG = logging.LoggerAdapter(logging.getLogger("foca.plugins.tes.routing.distance"))
 
@@ -119,6 +119,18 @@ def test_store_cache_ignores_invalid_entries(value: Any) -> None:
     store = make_store()
     store.set(store.key_for("location", "9.9.9.9"), value, ttl=100)
     assert StoreCache(store, LOG).get("9.9.9.9") == (False, None)
+
+
+@pytest.mark.parametrize(
+    "value", [[10**400, 0], [0, -(10**400)], [float("nan"), 0], [0, float("inf")]]
+)
+def test_invalid_numbers_are_no_locations(value: Any) -> None:
+    """Numbers out of range, also beyond floats (e.g., of other backends), fail.
+
+    Args:
+        value: Stored value.
+    """
+    assert _location(value) == (False, None)
 
 
 def test_store_cache_survives_store_failures(caplog: pytest.LogCaptureFixture) -> None:
