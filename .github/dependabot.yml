@@ -1,7 +1,7 @@
 version: 2
-# Every entry targets `dev` (`target-branch`), which takes all pull
-# requests whatever the default branch is (`main` only moves forward to
-# releases); security updates always target the default branch, though
+# No entry sets `target-branch`: pull requests go to the default branch
+# (`dev`) anyway, and while `target-branch` is set, GitHub doesn't apply
+# the entry's options (`labels`, `ignore`, ...) to security updates
 updates:
   # `uv.lock` and the `pyproject.toml` files of the workspace (the root and
   # every package)
@@ -10,7 +10,6 @@ updates:
     labels: ["type: dependencies"]
     schedule:
       interval: monthly
-    target-branch: dev
     versioning-strategy: increase-if-necessary
     groups:
       # Dependencies of the documentation (the `docs` group), in pull
@@ -29,7 +28,6 @@ updates:
     labels: ["type: dependencies"]
     schedule:
       interval: monthly
-    target-branch: dev
     ignore:
       - dependency-name: python
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
@@ -38,7 +36,6 @@ updates:
     labels: ["type: dependencies"]
     schedule:
       interval: monthly
-    target-branch: dev
     # `crypt4gh` itself is updated by hand, together with the version that
     # the tests use (see `requirements.in`); its dependencies by Dependabot
     ignore:
@@ -55,7 +52,6 @@ updates:
     labels: ["type: dependencies"]
     schedule:
       interval: monthly
-    target-branch: dev
     groups:
       crypt4gh-e2e-images:
         patterns: ["*"]
@@ -64,7 +60,6 @@ updates:
     labels: ["type: dependencies"]
     schedule:
       interval: monthly
-    target-branch: dev
     # Major versions by hand, as in proTES (e.g., MongoDB 8.0 refuses to
     # start on some Linux kernels)
     ignore:
@@ -79,7 +74,6 @@ updates:
     labels: ["type: dependencies"]
     schedule:
       interval: monthly
-    target-branch: dev
     groups:
       github-actions:
         patterns: ["*"]
@@ -89,7 +83,6 @@ updates:
     labels: ["type: dependencies"]
     schedule:
       interval: monthly
-    target-branch: dev
     groups:
       pre-commit:
         patterns: ["*"]
