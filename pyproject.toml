@@ -22,14 +22,14 @@ build-constraint-dependencies = ["setuptools==84.2.1"]
 [dependency-groups]
 # Local hooks of `.pre-commit-config.yaml` and CI use these too
 dev = [
-    "ast-grep-cli>=0.51",
-    "coverage>=7.16",
+    "ast-grep-cli>=0.51.1",
+    "coverage>=7.17.2",
     # The decryption script of `tes.data.crypt4gh` (run in its image, so no
     # dependency of the plugin) and its tests' keys and Crypt4GH files; the
     # image pins its own version. 1.8 has no wheels for Python 3.15 yet (its
     # sdist needs libsodium), so 3.15 gets 1.7, pure Python, with the same API
     "crypt4gh>=1.8.6; python_version < '3.15'",
-    "crypt4gh>=1.7,<1.8; python_version >= '3.15'",
+    "crypt4gh>=1.8.6,<1.9; python_version >= '3.15'",
     # Writes the GeoIP database fixtures of `tes.routing.distance`'s tests
     "mmdb-writer>=0.2.7",
     # Networks of those fixtures (also a dependency of mmdb-writer)
@@ -38,7 +38,7 @@ dev = [
     "pip-audit>=2.10",
     "pre-commit>=4.6",
     "pytest>=9.2.0",
-    "ruff>=0.17.3",
+    "ruff>=0.17.4",
 ]
 # Documentation (`mkdocs.yml`), built by Read the Docs (`.readthedocs.yaml`)
 # and in CI. The packages that add warnings, which fail the strict build,
