@@ -17,16 +17,26 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
-from foca.plugins import Backend, Context, Location, NotApplicable, Principal
+from foca.plugins import (
+    Backend,
+    Context,
+    Location,
+    NotApplicable,
+    PluginError,
+    Principal,
+    StoreError,
+)
 from foca.plugins.base import EmptyModel, check_plugin_class
 from foca.plugins.config import PluginsConfig
 from foca.plugins.engine import PluginHost
+from foca.plugins.store import MemoryStoreBackend
 from foca.plugins.testing import (
     FakeHttp,
     PluginHarness,
     check_plugin_contract,
     make_backend,
     make_inbound,
+    make_principal,
 )
 from pydantic import ValidationError
 import pytest
@@ -159,8 +169,12 @@ def test_plugin_class_is_valid() -> None:
         "db-ip.com (api.db-ip.com)",
         "OpenStreetMap Nominatim (or the instance the admin configures)",
     ]
-    # The lookups are cached per process, not in the plugin store
-    assert Distance.data_stored == ()
+    # With provider 'dbip' only: locations and counts in the plugin store
+    stored = [entry.split(":")[0] for entry in Distance.data_stored]
+    assert stored == [
+        "Locations of public IP addresses",
+        "Daily lookup counts per caller",
+    ]
 
 
 def test_plugin_meets_contract(
@@ -198,7 +212,10 @@ def test_config_defaults(database: Path) -> None:
     assert config.resolve_timeout == 2
     assert config.resolve_threads == 16
     assert config.dbip_max_lookups == 5
+    assert config.dbip_user_daily_lookups == 100
     assert config.cache_failure_ttl == 60
+    unlimited = DistanceConfig(provider="dbip", dbip_user_daily_lookups=None)
+    assert unlimited.dbip_user_daily_lookups is None
 
 
 @pytest.mark.parametrize(
@@ -215,6 +232,7 @@ def test_config_defaults(database: Path) -> None:
         {"provider": "dbip", "user_agent": "gw/1\u00e9"},
         {"provider": "dbip", "resolve_threads": 0},
         {"provider": "dbip", "dbip_max_lookups": 0},
+        {"provider": "dbip", "dbip_user_daily_lookups": 0},
         {"provider": "dbip", "max_hosts": 0},
         {"provider": "dbip", "cache_ttl": -1},
         {"provider": "dbip", "other": "value"},
@@ -888,6 +906,285 @@ def test_online_lookups_are_capped_per_call(
     assert execution.annotations["skipped_lookups"] == 1
     # DB-IP and Nominatim for each lookup
     assert len(http.calls) == 6
+
+
+def test_online_lookups_are_shared_by_processes(
+    world: list[Backend], addresses: dict[str, str], places: dict[str, Location]
+) -> None:
+    """With `dbip`, locations are kept in the plugin store, for all processes.
+
+    Args:
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+        places: Places of the networks.
+    """
+    backend = MemoryStoreBackend()
+    config = {"provider": "dbip", "nominatim_interval": 0}
+    http = dbip_http(addresses, places)
+    first, second = (
+        PluginHarness(
+            Distance,
+            config=config,
+            plugin_id=PLUGIN_ID,
+            http=http,
+            store_backend=backend,
+        )
+        for _ in range(2)
+    )
+    task = make_task(addresses["zurich"])
+    assert ids(first.run_route(world, make_inbound(task))) == [
+        "helsinki",
+        "mountain_view",
+        "sydney",
+    ]
+    assert len(http.calls) == 8
+    # another process (its own plugin instance), the same store: no lookups
+    assert ids(second.run_route(world, make_inbound(task)))[0] == "helsinki"
+    assert len(http.calls) == 8
+    (execution,) = second.executions
+    assert (execution.annotations["lookups"], execution.annotations["cache_hits"]) == (
+        0,
+        4,
+    )
+    # keys are hashes of the addresses
+    store = second.store
+    zurich = places["zurich"]
+    assert store.get(addresses["zurich"]) is None
+    assert store.get(store.key_for("location", addresses["zurich"])) == [
+        zurich.latitude,
+        zurich.longitude,
+    ]
+
+
+def test_offline_lookups_stay_in_the_process(
+    database: Path, world: list[Backend], addresses: dict[str, str]
+) -> None:
+    """With `offline`, nothing is kept in the plugin store.
+
+    Args:
+        database: Test database.
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+    """
+    harness = PluginHarness(
+        Distance, config={"database": str(database)}, plugin_id=PLUGIN_ID
+    )
+    harness.run_route(world, make_inbound(make_task(addresses["zurich"])))
+    store = harness.store
+    for address in addresses.values():
+        assert store.get(store.key_for("location", address)) is None
+    assert store.get(store.key_for("dbip-lookups", "user", "user")) is None
+
+
+def test_online_lookups_have_a_daily_budget_per_caller(
+    world: list[Backend], addresses: dict[str, str], places: dict[str, Location]
+) -> None:
+    """With `dbip`, each caller gets `dbip_user_daily_lookups` lookups a day.
+
+    Args:
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+        places: Places of the networks.
+    """
+    http = dbip_http(addresses, places)
+    harness = PluginHarness(
+        Distance,
+        config={
+            "provider": "dbip",
+            "nominatim_interval": 0,
+            "dbip_user_daily_lookups": 2,
+        },
+        plugin_id=PLUGIN_ID,
+        http=http,
+    )
+    inbound = make_inbound(make_task(addresses["zurich"]))
+    alice, bob = make_principal("alice"), make_principal("bob")
+    # the input and the first backend; the other two backends are skipped
+    assert ids(harness.run_route(world, inbound, alice)) == [
+        "sydney",
+        "mountain_view",
+        "helsinki",
+    ]
+    (execution,) = harness.executions
+    assert execution.annotations["lookups"] == 2
+    assert execution.annotations["skipped_lookups"] == 2
+    assert len(http.calls) == 4
+    # alice's budget is used up: no lookups, the cached ones still count
+    harness.run_route(world, inbound, alice)
+    (execution,) = harness.executions
+    assert (execution.annotations["lookups"], execution.annotations["cache_hits"]) == (
+        0,
+        2,
+    )
+    assert execution.annotations["skipped_lookups"] == 2
+    # bob has a budget of his own
+    assert ids(harness.run_route(world, inbound, bob)) == [
+        "helsinki",
+        "mountain_view",
+        "sydney",
+    ]
+    (execution,) = harness.executions
+    assert execution.annotations["lookups"] == 2
+    assert len(http.calls) == 8
+    # cached locations need no budget
+    assert ids(harness.run_route(world, inbound, alice))[0] == "helsinki"
+    (execution,) = harness.executions
+    assert (execution.annotations["lookups"], execution.annotations["cache_hits"]) == (
+        0,
+        4,
+    )
+    store = harness.store
+    assert store.get(store.key_for("dbip-lookups", "user", "alice")) == 2
+
+
+def test_online_budget_can_be_turned_off(
+    world: list[Backend], addresses: dict[str, str], places: dict[str, Location]
+) -> None:
+    """With `dbip_user_daily_lookups: null`, callers have no budget.
+
+    Args:
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+        places: Places of the networks.
+    """
+    harness = PluginHarness(
+        Distance,
+        config={
+            "provider": "dbip",
+            "nominatim_interval": 0,
+            "dbip_user_daily_lookups": None,
+        },
+        plugin_id=PLUGIN_ID,
+        http=dbip_http(addresses, places),
+    )
+    harness.run_route(world, make_inbound(make_task(addresses["zurich"])))
+    (execution,) = harness.executions
+    assert execution.annotations["lookups"] == 4
+    store = harness.store
+    assert store.get(store.key_for("dbip-lookups", "user", "user")) is None
+
+
+@pytest.mark.parametrize(
+    ("transient", "sent", "count"),
+    [(True, False, 0), (False, False, 0), (True, True, 1), (False, True, 1)],
+)
+def test_online_budget_is_not_spent_on_lookups_without_requests(
+    world: list[Backend],
+    addresses: dict[str, str],
+    places: dict[str, Location],
+    monkeypatch: pytest.MonkeyPatch,
+    transient: bool,
+    sent: bool,
+    count: int,
+) -> None:
+    """Failed lookups that sent no request are given back to the budget.
+
+    E.g., for lack of time, or while DB-IP is backed off; failed lookups
+    that may have sent requests count.
+
+    Args:
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+        places: Places of the networks.
+        monkeypatch: Pytest fixture.
+        transient: Whether the failure is transient.
+        sent: Whether the failed lookup may have sent a request.
+        count: Expected count of the caller's lookups.
+    """
+    harness = PluginHarness(
+        Distance,
+        config={"provider": "dbip", "dbip_user_daily_lookups": 2},
+        plugin_id=PLUGIN_ID,
+        http=dbip_http(addresses, places),
+        on_failure="skip",
+    )
+
+    def busy(address: str, ctx: Context) -> Location | None:
+        """Have no time.
+
+        Args:
+            address: Address.
+            ctx: Context.
+
+        Raises:
+            LookupFailed: Always.
+        """
+        raise LookupFailed("no time", transient=transient, sent=sent)
+
+    plugin = harness.plugin.instance
+    assert isinstance(plugin, Distance)
+    monkeypatch.setattr(plugin.provider, "locate", busy)
+    harness.run_route(world, make_inbound(make_task(addresses["zurich"])))
+    execution = harness.executions[0]
+    assert execution.outcome == "not_applicable"
+    assert execution.annotations["failed_lookups"] == 1
+    store = harness.store
+    assert store.get(store.key_for("dbip-lookups", "user", "user")) == count
+    # failures of services are cached (as misses) unless transient; others
+    # (e.g., back-off of the process) not, as other processes share the cache
+    cached = store.get(store.key_for("location", addresses["zurich"]))
+    assert cached == ([] if sent and not transient else None)
+
+
+@pytest.mark.parametrize(("budget", "lookups", "calls"), [(5, 0, 0), (None, 4, 8)])
+def test_online_lookups_without_store(
+    world: list[Backend],
+    addresses: dict[str, str],
+    places: dict[str, Location],
+    budget: int | None,
+    lookups: int,
+    calls: int,
+) -> None:
+    """If the store fails, nothing is cached, and the budget allows nothing.
+
+    Args:
+        world: Backends.
+        addresses: Addresses in the networks of the test database.
+        places: Places of the networks.
+        budget: `dbip_user_daily_lookups`.
+        lookups: Expected number of lookups.
+        calls: Expected number of requests.
+    """
+    error = StoreError("Plugin store failed: ServerSelectionTimeoutError")
+    backend = MagicMock(
+        shared=True,
+        **{
+            f"{name}.side_effect": error
+            for name in ("get", "set", "delete", "increment")
+        },
+    )
+    http = dbip_http(addresses, places)
+    harness = PluginHarness(
+        Distance,
+        config={
+            "provider": "dbip",
+            "nominatim_interval": 0,
+            "dbip_user_daily_lookups": budget,
+        },
+        plugin_id=PLUGIN_ID,
+        http=http,
+        on_failure="skip",
+        store_backend=backend,
+    )
+    harness.run_route(world, make_inbound(make_task(addresses["zurich"])))
+    execution = harness.executions[0]
+    assert execution.annotations["lookups"] == lookups
+    assert len(http.calls) == calls
+    assert backend.get.call_count == 1
+
+
+def test_online_provider_needs_store(world: list[Backend]) -> None:
+    """With `dbip`, contexts without `ctx.store` are refused.
+
+    Args:
+        world: Backends.
+    """
+    plugin = Distance(PLUGIN_ID, DistanceConfig(provider="dbip"))
+    try:
+        with pytest.raises(PluginError, match=r"ctx\.store"):
+            plugin.on_route(world, make_context(make_task("9.9.9.9")))
+    finally:
+        plugin.close()
 
 
 def dbip_http(addresses: dict[str, str], places: dict[str, Location]) -> FakeHttp:

@@ -46,9 +46,9 @@ classifiers = [
     # <<< template only
 ]
 dependencies = [
-    # The plugin API of FOCA 0.18 to 0.22 (`foca.plugins`, API version 1);
+    # The plugin API of FOCA 0.19 to 0.22 (`foca.plugins`, API version 1);
     # raise the upper bound once CI has tested the next minor version
-    "foca>=0.18.0,<0.23",
+    "foca>=0.19.0,<0.23",
     "pydantic>=2.7,<3",
 ]
 

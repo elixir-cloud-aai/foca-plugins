@@ -18,8 +18,8 @@ successor of proTES's distance-based task distribution.
 | Capabilities | `routing-by-data-locality` |
 | Maturity | experimental |
 | Data transfers | none by default; with `provider: dbip`, db-ip.com and Nominatim (see [Data transfers](#data-transfers)) |
-| Data stored | none (no plugin store) |
-| FOCA | 0.18, 0.19, 0.20, 0.21, 0.22 (`>=0.18.0,<0.23`) |
+| Data stored | none by default; with `provider: dbip`, located addresses and daily lookup counts per caller, by hashes (see [Data stored](#data-stored)) |
+| FOCA | 0.19, 0.20, 0.21, 0.22 (`>=0.19.0,<0.23`) |
 
 ## What it does
 
@@ -57,19 +57,28 @@ Annotations, counts only (hosts, addresses and places of inputs could be
 personal data): `inputs` (input URLs), `input_hosts`, `located_inputs`
 (input URLs with a location), `located_backends`, `lookups` (by the
 provider), `cache_hits`, `failed_lookups` and `skipped_lookups`
-(addresses not looked up for lack of time or beyond `dbip_max_lookups`).
+(addresses not looked up for lack of time, beyond `dbip_max_lookups` or
+beyond the caller's `dbip_user_daily_lookups`).
 The order is in the provenance of each request (`route.candidates_out`).
 
 ### Cache and limits
 
-Each process caches the lookups of addresses, also misses (addresses
-without location), so that backends are looked up once per process until
-the entry expires, not per task: `cache_ttl` (1 day) for locations,
+The plugin caches the lookups of addresses, also misses (addresses
+without location), so that backends are looked up once until the entry
+expires, not per task: `cache_ttl` (1 day) for locations,
 `cache_miss_ttl` (1 hour) for misses and `cache_failure_ttl` (1 minute)
 for failed lookups (e.g., a service is down; not lookups that only ran
-out of time), at most `cache_size` addresses (the least recently used go
-first). The cache doesn't use FOCA 0.19's plugin store yet (#21), so it
-is not shared between processes.
+out of time).
+
+- With the `offline` provider, each process caches at most `cache_size`
+  addresses (the least recently used go first).
+- With `dbip`, the cache is in FOCA's plugin store (`ctx.store`), shared
+  by all processes and replicas if the gateway has a database (otherwise
+  per process, see FOCA's [plugin
+  store](https://foca.readthedocs.io/en/latest/configuration/plugins/#plugin-store)).
+  Its entries are limited by the TTLs above, capped by the operator's
+  `max_ttl` of the store, not by `cache_size` (0 still turns it off). If
+  the store fails or is full, the call goes on without the cache.
 
 Name resolution can't be interrupted, and hosts of inputs come from
 clients, so slow or hostile name servers must not tie up the gateway's
@@ -118,12 +127,13 @@ know them: they are exact, and need no lookup.
 | `config.nominatim_interval` | seconds, 0 to 60 | `1.0` | time between requests to Nominatim, per process (its policy: at most 1 per second) |
 | `config.dbip_backoff` | seconds, 0 to 86400 | `600` | time to ask DB-IP nothing after it refused a lookup, e.g., over its daily quota (`dbip`) |
 | `config.dbip_max_lookups` | 1 to 1000 | `5` | uncached lookups per call, for inputs and for backends each (`dbip`), so that no single task uses up DB-IP's quota |
+| `config.dbip_user_daily_lookups` | 1 to 1000000, or `null` | `100` | uncached lookups per caller and day, counted in FOCA's plugin store (`dbip`), so that no single user uses up DB-IP's quota; `null` for no limit |
 | `config.locate_backends` | boolean | `true` | whether backends without configured location are located by their address |
 | `config.max_hosts` | 1 to 1000 | `20` | input hosts to locate per task |
 | `config.resolve_timeout` | seconds, up to 60 | `2.0` | time to resolve the host names of a call, in total: half for inputs, the rest for backends (and never beyond the step's deadline) |
 | `config.resolve_threads` | 1 to 256 | `16` | host names resolved at a time, per process, for inputs and for backends each (a call: at most a quarter for its inputs) |
 | `config.resolve_cache_ttl` | seconds, ≥ 0 | `300` | time to keep the addresses of host names, also of names that couldn't be resolved |
-| `config.cache_size` | ≥ 0 | `10000` | entries of each cache (addresses; host names of inputs and of backends; with `dbip`, places and coordinates); 0 turns the caches off |
+| `config.cache_size` | ≥ 0 | `10000` | entries of each cache of a process (addresses with `offline`; host names of inputs and of backends; with `dbip`, places and coordinates); 0 turns the caches off, also that of addresses in the plugin store (`dbip`) |
 | `config.cache_ttl` | seconds, ≥ 0 | `86400` | time to keep located addresses |
 | `config.cache_miss_ttl` | seconds, ≥ 0 | `3600` | time to keep addresses without location |
 | `config.cache_failure_ttl` | seconds, ≥ 0 | `60` | time to keep addresses whose lookup failed as unlocated |
@@ -188,11 +198,21 @@ public instance one per second. The plugin caches places and coordinates,
 looks up at most `dbip_max_lookups` uncached addresses per call (for
 inputs and for backends each), asks DB-IP only if Nominatim has a turn
 before the deadline, and backs off for `dbip_backoff` when DB-IP refuses
-lookups. These limits can't keep users who submit many tasks with fresh
-public addresses from using up DB-IP's daily quota; distance routing then
-doesn't apply (the next alternative routes) until the quota resets. Use
-`offline` where that matters, and your own Nominatim instance
-(`nominatim_url`) if you can.
+lookups. Each caller may make at most `dbip_user_daily_lookups` (100)
+uncached lookups per day (a fixed window from the caller's first lookup),
+counted in FOCA's plugin store by a hash of the caller's identity
+(`subject_type` and `subject`; all anonymous callers share one count, and
+a service client has one, whichever users it acts for; lookups that sent
+no request, e.g., while DB-IP is backed off, don't count); if the store
+fails, the call makes no lookups (the budget fails closed). Without a
+database, the counts are per process, so the limit is only approximate.
+The window is capped by the operator's `max_ttl` of the store: keep it at
+a day or more, or the limit holds per `max_ttl` instead of per day.
+These limits make it harder, but can't keep users from using up DB-IP's
+daily quota (e.g., several users together); distance routing then doesn't
+apply (the next alternative routes) until the quota resets. Use `offline`
+where that matters, and your own Nominatim instance (`nominatim_url`) if
+you can.
 
 DB-IP's page of the free API asks for no attribution; check DB-IP's terms
 of service for your use. Nominatim's data is © OpenStreetMap contributors
@@ -212,6 +232,25 @@ of service for your use. Nominatim's data is © OpenStreetMap contributors
   The hosts of inputs may reveal where users keep their data: tell users,
   e.g., in your gateway's privacy notice. Clients see these transfers in
   the plugin listing (`data_transfers`), whatever the provider.
+
+## Data stored
+
+- **Default (`offline`):** nothing in FOCA's plugin store.
+- **`provider: dbip`**, in FOCA's plugin store (`ctx.store`):
+  - the locations (latitude and longitude) of the public IP addresses of
+    the hosts of task inputs and of backends, also misses, keyed by a hash
+    of the address, for up to `cache_ttl`;
+  - daily lookup counts per caller, keyed by a hash of the caller's
+    identity, for a day (only with `dbip_user_daily_lookups`).
+
+  Keys are hashes from `ctx.store.key_for()` (HMACs, if the operator set
+  FOCA's key secret, `plugins.defaults.store.key_secret`), never the
+  addresses or identifiers as they are. They pseudonymize, but don't
+  anonymize: the entries remain personal data, kept at most for the
+  operator's `max_ttl` of the store. Clients see them in the plugin
+  listing (`data_stored`). Set the key secret with `provider: dbip`:
+  without it, anyone who can read the database (or a backup) can recover
+  the addresses by hashing all IPv4 addresses.
 
 ## Installation
 

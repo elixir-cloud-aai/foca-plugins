@@ -17,9 +17,12 @@ Locations come from:
 
 Host names are resolved in parallel, within a time budget per call and
 with a bounded number of resolver threads per process. Resolutions and
-lookups (also misses and, briefly, failures) are cached per process, with
-TTLs. Annotations hold counts only: hosts, addresses and places of inputs
-could be personal data.
+lookups (also misses and, briefly, failures) are cached, with TTLs: per
+process, except the lookups of the `dbip` provider, which are kept in
+FOCA's plugin store (`ctx.store`), shared by all processes and replicas,
+together with a daily budget of lookups per caller (cf. :py:mod:`.store`).
+Annotations hold counts only: hosts, addresses and places of inputs could
+be personal data.
 
 The plugin API is documented in FOCA's `docs/plugins.md`
 (https://foca.readthedocs.io/en/latest/plugins/).
@@ -31,7 +34,14 @@ from dataclasses import dataclass, field
 import time
 from typing import Literal
 
-from foca.plugins import Backend, Context, Location, NotApplicable, Plugin
+from foca.plugins import (
+    Backend,
+    Context,
+    Location,
+    NotApplicable,
+    Plugin,
+    PluginError,
+)
 from foca.plugins.base import EmptyModel
 from pydantic import (
     BaseModel,
@@ -42,7 +52,7 @@ from pydantic import (
     model_validator,
 )
 
-from foca_plugins.tes.routing.distance.cache import TtlCache
+from foca_plugins.tes.routing.distance.cache import LocationCache, TtlCache
 from foca_plugins.tes.routing.distance.geo import (
     Resolver,
     distance_km,
@@ -57,6 +67,7 @@ from foca_plugins.tes.routing.distance.providers import (
     OfflineProvider,
     Provider,
 )
+from foca_plugins.tes.routing.distance.store import StoreCache, UserBudget
 
 
 class DistanceConfig(BaseModel):
@@ -83,6 +94,10 @@ class DistanceConfig(BaseModel):
             per call (not counting cached ones), for the inputs and for the
             backends each; further addresses are not located in that call,
             so that no single task uses up DB-IP's quota.
+        dbip_user_daily_lookups: Maximum number of lookups by DB-IP and
+            Nominatim per caller and day (not counting cached ones), in all
+            processes that share the plugin store, so that no single user
+            uses up DB-IP's quota; `None` for no limit.
         locate_backends: Whether backends without configured location are
             located by their address; if not, they rank after the located
             ones.
@@ -97,9 +112,11 @@ class DistanceConfig(BaseModel):
             resolved.
         resolve_cache_ttl: Seconds to keep the addresses of host names,
             also of names that couldn't be resolved.
-        cache_size: Maximum number of entries of each cache (addresses,
-            host names of inputs and of backends, and, with `dbip`, places
-            and coordinates); 0 turns the caches off.
+        cache_size: Maximum number of entries of each cache of the
+            process (addresses, host names of inputs and of backends, and,
+            with `dbip`, places and coordinates); 0 turns the caches off,
+            also that of addresses in the plugin store (`dbip`), which this
+            setting doesn't limit.
         cache_ttl: Seconds to keep located addresses.
         cache_miss_ttl: Seconds to keep addresses without location.
         cache_failure_ttl: Seconds to keep addresses whose lookup failed as
@@ -121,6 +138,7 @@ class DistanceConfig(BaseModel):
     nominatim_interval: float = Field(default=1.0, ge=0, le=60)
     dbip_backoff: float = Field(default=600, ge=0, le=86400)
     dbip_max_lookups: int = Field(default=5, ge=1, le=1000)
+    dbip_user_daily_lookups: int | None = Field(default=100, ge=1, le=1_000_000)
     locate_backends: bool = True
     max_hosts: int = Field(default=20, ge=1, le=1000)
     resolve_timeout: float = Field(default=2.0, gt=0, le=60)
@@ -175,6 +193,7 @@ class _Locator:
         ctx: Context of the call.
         max_lookups: Maximum number of lookups by the provider per batch of
             hosts (inputs, backends); `None` for no limit.
+        budget: Budget of lookups of the caller; `None` for no limit.
         hosts: Locations of the hosts located in this call.
         lookups: Number of lookups by the provider.
         cache_hits: Number of addresses found in the cache.
@@ -186,10 +205,11 @@ class _Locator:
     """
 
     provider: Provider
-    cache: TtlCache[str, Location | None]
+    cache: LocationCache
     settings: DistanceConfig
     ctx: Context
     max_lookups: int | None
+    budget: UserBudget | None = None
     hosts: dict[str, Location | None] = field(default_factory=dict)
     lookups: int = 0
     cache_hits: int = 0
@@ -232,8 +252,10 @@ class _Locator:
         if cached:
             self.cache_hits += 1
             return location
-        if self.ctx.remaining() <= 0 or (
-            self.max_lookups is not None and self.batch_lookups >= self.max_lookups
+        if (
+            self.ctx.remaining() <= 0
+            or (self.max_lookups is not None and self.batch_lookups >= self.max_lookups)
+            or (self.budget is not None and not self.budget.take())
         ):
             self.skipped_lookups += 1
             return None
@@ -244,7 +266,12 @@ class _Locator:
         except LookupFailed as exc:
             self.failed_lookups += 1
             self.ctx.log.warning("Lookup failed: %s", exc)
-            if not exc.transient:
+            if not exc.sent and self.budget is not None:
+                # no request was sent (e.g., backed off): it doesn't count
+                self.budget.give_back()
+            if exc.sent and not exc.transient:
+                # only failures of services: not, e.g., this process's
+                # back-off, as the cache may be shared with other processes;
                 # keeps a location that a concurrent call found meanwhile
                 self.cache.add(address, None, self.settings.cache_failure_ttl)
             return None
@@ -261,7 +288,8 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
         provider: Provider of locations (cf. `DistanceConfig.provider`);
             kept after `close()`, when its lookups fail.
         cache: Cache of looked-up locations, by address, shared by all
-            calls.
+            calls of the process; used by the `offline` provider only
+            (`dbip` keeps them in the plugin store).
         input_resolver: Resolver of the host names of inputs, shared by
             all calls; a call starts at most a quarter of its threads.
         backend_resolver: Resolver of the host names of backends, with
@@ -288,9 +316,13 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
         "OpenStreetMap Nominatim (or the instance the admin configures): city,"
         " region and country of those addresses; only with provider 'dbip'",
     )
-    # Nothing in the plugin store: lookups are cached per process (listed by
-    # FOCA 0.19; declared here, as FOCA 0.18 has no such attribute)
-    data_stored = ()
+    data_stored = (
+        "Locations of public IP addresses: of the hosts of task inputs and"
+        " backends, by a hash of the address (an HMAC if the operator set a key"
+        " secret), for up to 'cache_ttl'; only with provider 'dbip'",
+        "Daily lookup counts per caller: by a hash of the caller's identity,"
+        " for a day; only with provider 'dbip' and 'dbip_user_daily_lookups'",
+    )
 
     provider: Provider
     cache: TtlCache[str, Location | None]
@@ -360,19 +392,33 @@ class Distance(Plugin[DistanceConfig, EmptyModel]):
         Raises:
             NotApplicable: The task has no input URLs, no input could be
                 located, or no candidate could be located.
+            PluginError: The provider is `dbip`, and the context has no
+                plugin store.
         """
         urls = input_urls(ctx.original)
         if not urls:
             raise NotApplicable("The task has no input URLs")
         settings = self.settings
+        cache: LocationCache = self.cache
+        user_budget: UserBudget | None = None
+        max_lookups: int | None = None
+        if settings.provider == "dbip":
+            store = ctx.store
+            if store is None:
+                raise PluginError("Provider 'dbip' needs ctx.store")
+            cache = StoreCache(store, ctx.log, enabled=settings.cache_size > 0)
+            if settings.dbip_user_daily_lookups is not None:
+                user_budget = UserBudget(
+                    store, ctx.principal, settings.dbip_user_daily_lookups, ctx.log
+                )
+            max_lookups = settings.dbip_max_lookups
         locator = _Locator(
             provider=self.provider,
-            cache=self.cache,
+            cache=cache,
             settings=settings,
             ctx=ctx,
-            max_lookups=(
-                settings.dbip_max_lookups if settings.provider == "dbip" else None
-            ),
+            max_lookups=max_lookups,
+            budget=user_budget,
         )
         # inputs per host: distances are computed once per host, weighted
         weights = Counter(host for url in urls if (host := url_host(url)))

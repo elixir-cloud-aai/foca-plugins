@@ -1,5 +1,6 @@
-"""Tests of the location providers and the cache of `tes.routing.distance`."""
+"""Tests of the providers and caches of `tes.routing.distance`."""
 
+import logging
 from pathlib import Path
 import threading
 import time
@@ -26,6 +27,7 @@ NOMINATIM = "https://nominatim.openstreetmap.org"
 AGENT = "test-agent/1.0"
 ADDRESS = "9.9.9.9"
 PLACE = {"city": "Zurich", "stateProv": "Zurich", "countryCode": "CH"}
+LOG = logging.LoggerAdapter(logging.getLogger("foca.plugins.tes.routing.distance"))
 
 
 class Clock:
@@ -408,6 +410,7 @@ def test_dbip_provider_waits_outside_the_lock() -> None:
         with pytest.raises(LookupFailed, match="rate limit") as failed:
             provider.locate("9.9.9.2", make_context(http, seconds=100))
         assert failed.value.transient
+        assert not failed.value.sent
     finally:
         go_on.set()
         second.join(5)
@@ -482,11 +485,13 @@ def test_dbip_provider_backs_off(status: int, body: Any) -> None:
     provider = make_dbip(clock)
     http = FakeHttp()
     http.add("GET", f"{DBIP}/{ADDRESS}", status=status, json=body)
-    with pytest.raises(LookupFailed, match=r"refused|429"):
+    with pytest.raises(LookupFailed, match=r"refused|429") as refused:
         provider.locate(ADDRESS, make_context(http))
+    assert refused.value.sent
     clock.now += 599
-    with pytest.raises(LookupFailed, match="backing off"):
+    with pytest.raises(LookupFailed, match="backing off") as backing_off:
         provider.locate(ADDRESS, make_context(http))
+    assert not backing_off.value.sent
     assert len(http.calls) == 1
     clock.now += 2
     with pytest.raises(LookupFailed):
@@ -594,9 +599,25 @@ def test_dbip_provider_fails_after_close() -> None:
     provider = make_dbip()
     provider.close()
     http = FakeHttp()
-    with pytest.raises(LookupFailed, match="closed"):
+    with pytest.raises(LookupFailed, match="closed") as closed:
         provider.locate(ADDRESS, make_context(http))
+    assert not closed.value.sent
     assert http.calls == []
+
+
+def test_dbip_provider_failures_after_requests_were_sent() -> None:
+    """Failures after requests were sent say so, also if transient."""
+    clock = Clock()
+    provider = DbipProvider(DBIP, NOMINATIM, AGENT, 60, cache_size=0, clock=clock)
+    http = FakeHttp()
+    http.add("GET", f"{DBIP}/{ADDRESS}", json=PLACE)
+    http.add("GET", search_url("Zurich, Zurich CH"), json=[])
+    # the second query's turn (in 60 s) comes after the deadline
+    with pytest.raises(LookupFailed, match="rate limit") as failed:
+        provider.locate(ADDRESS, make_context(http, seconds=10))
+    assert failed.value.transient
+    assert failed.value.sent
+    assert len(http.calls) == 2
 
 
 def test_dbip_provider_keeps_misses_for_miss_ttl() -> None:

@@ -7,6 +7,13 @@ Features, Security, Fixes, Documentation, Maintenance; empty ones left
 out), each entry with its issue and pull request numbers (see "Releasing"
 in the docs).
 
+## Unreleased
+
+### Breaking changes
+
+- Drop FOCA 0.18 (`foca>=0.19.0,<0.23`), as all plugins of the repository
+  do: `tes.routing.distance` needs FOCA 0.19's plugin store (#21).
+
 ## 0.1.3
 
 Support for FOCA 0.21 and 0.22: the plugin now installs alongside FOCA

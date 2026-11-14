@@ -67,8 +67,7 @@ class Random(Plugin[RandomConfig, RandomParams]):
         " the order depends only on the seed and the order of the candidates"
         " (on the same Python version)."
     )
-    # Nothing in the plugin store (listed by FOCA 0.19; declared here, as
-    # FOCA 0.18 has no such attribute)
+    # Nothing in the plugin store (listed in FOCA's plugin listing)
     data_stored = ()
 
     # Set by `setup()`, from the admin settings
