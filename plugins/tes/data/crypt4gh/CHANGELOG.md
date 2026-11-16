@@ -6,7 +6,13 @@ changes in the sections of the release notes (Breaking changes, Features,
 Security, Fixes, Documentation, Maintenance; empty ones left out), each
 entry with its issue and pull request numbers (see "Releasing" in the docs).
 
-## Unreleased
+## 0.1.0
+
+The first release of the plugin, the successor of proTES's Crypt4GH
+middleware (experimental): it decrypts the Crypt4GH inputs of TES tasks in
+an executor of its own, empties the volume of the decrypted files after the
+task, and ships its decryption image, scanned, signed and attested, as
+`elixircloud/foca-plugin-tes-data-crypt4gh-decrypt:0.1.0`.
 
 ### Features
 
