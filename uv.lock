@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -1351,6 +1351,7 @@ dependencies = [
 [package.optional-dependencies]
 experimental = [
     { name = "foca-plugin-generic-routing-random" },
+    { name = "foca-plugin-tes-data-crypt4gh" },
     { name = "foca-plugin-tes-routing-distance" },
 ]
 generic = [
@@ -1360,7 +1361,11 @@ generic-routing = [
     { name = "foca-plugin-generic-routing-random" },
 ]
 tes = [
+    { name = "foca-plugin-tes-data-crypt4gh" },
     { name = "foca-plugin-tes-routing-distance" },
+]
+tes-data = [
+    { name = "foca-plugin-tes-data-crypt4gh" },
 ]
 tes-routing = [
     { name = "foca-plugin-tes-routing-distance" },
@@ -1372,11 +1377,14 @@ requires-dist = [
     { name = "foca-plugin-generic-routing-random", marker = "extra == 'experimental'", editable = "plugins/generic/routing/random" },
     { name = "foca-plugin-generic-routing-random", marker = "extra == 'generic'", editable = "plugins/generic/routing/random" },
     { name = "foca-plugin-generic-routing-random", marker = "extra == 'generic-routing'", editable = "plugins/generic/routing/random" },
+    { name = "foca-plugin-tes-data-crypt4gh", marker = "extra == 'experimental'", editable = "plugins/tes/data/crypt4gh" },
+    { name = "foca-plugin-tes-data-crypt4gh", marker = "extra == 'tes'", editable = "plugins/tes/data/crypt4gh" },
+    { name = "foca-plugin-tes-data-crypt4gh", marker = "extra == 'tes-data'", editable = "plugins/tes/data/crypt4gh" },
     { name = "foca-plugin-tes-routing-distance", marker = "extra == 'experimental'", editable = "plugins/tes/routing/distance" },
     { name = "foca-plugin-tes-routing-distance", marker = "extra == 'tes'", editable = "plugins/tes/routing/distance" },
     { name = "foca-plugin-tes-routing-distance", marker = "extra == 'tes-routing'", editable = "plugins/tes/routing/distance" },
 ]
-provides-extras = ["generic", "generic-routing", "tes", "tes-routing", "wes", "all", "experimental"]
+provides-extras = ["generic", "generic-routing", "tes", "tes-data", "tes-routing", "wes", "all", "experimental"]
 
 [[package]]
 name = "frozenlist"

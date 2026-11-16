@@ -11,9 +11,11 @@ dependencies (and scanner findings) out of their images.
 !!! note "Experimental plugins only"
 
     The plugins released so far, `generic.routing.random` and
-    `tes.routing.distance` (0.1.3 each), are experimental; the latest release
-    train is `foca-plugins` 0.3.0. Distributions named below that don't
-    exist yet are examples of the naming scheme.
+    `tes.routing.distance` (0.1.3 each) and `tes.data.crypt4gh` (0.1.0),
+    are experimental; the latest release train is `foca-plugins` 0.3.0,
+    which doesn't pin `tes.data.crypt4gh` yet (the next train will).
+    Distributions named below that don't exist yet are examples of the
+    naming scheme.
 
 ## Release trains: the meta distribution
 
@@ -25,10 +27,13 @@ FOCA versions that it declares.
 
 | Extra | Installs | Now |
 | --- | --- | --- |
-| `foca-plugins[<group>]` (`generic`, `tes`, `wes`) | the stable and experimental plugins of a group | `[generic]`: `generic.routing.random`; `[tes]`: `tes.routing.distance`; `[wes]`: empty |
-| `foca-plugins[<group>-<subgroup>]`, e.g., `[tes-routing]` | those of a subgroup | `[generic-routing]`, `[tes-routing]` (a subgroup's extra is added with its first plugin) |
+| `foca-plugins[<group>]` (`generic`, `tes`, `wes`) | the stable and experimental plugins of a group | `[generic]`: `generic.routing.random`; `[tes]`: `tes.data.crypt4gh`, `tes.routing.distance`; `[wes]`: empty |
+| `foca-plugins[<group>-<subgroup>]`, e.g., `[tes-routing]` | those of a subgroup | `[generic-routing]`, `[tes-data]`, `[tes-routing]` (a subgroup's extra is added with its first plugin) |
 | `foca-plugins[all]` | all stable plugins | empty |
-| `foca-plugins[experimental]` | all experimental plugins | both plugins |
+| `foca-plugins[experimental]` | all experimental plugins | all three plugins |
+
+The column "Now" shows the extras on `dev`, for the next release train;
+`tes.data.crypt4gh` and the extra `[tes-data]` are in no released train yet.
 
 For example:
 

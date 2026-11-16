@@ -44,12 +44,17 @@ dependencies = ["foca>=0.19.0,<0.23"]
 [project.optional-dependencies]
 generic = ["foca-plugin-generic-routing-random==0.1.3"]
 generic-routing = ["foca-plugin-generic-routing-random==0.1.3"]
-tes = ["foca-plugin-tes-routing-distance==0.1.3"]
+tes = [
+    "foca-plugin-tes-data-crypt4gh==0.1.0",
+    "foca-plugin-tes-routing-distance==0.1.3",
+]
+tes-data = ["foca-plugin-tes-data-crypt4gh==0.1.0"]
 tes-routing = ["foca-plugin-tes-routing-distance==0.1.3"]
 wes = []
 all = []
 experimental = [
     "foca-plugin-generic-routing-random==0.1.3",
+    "foca-plugin-tes-data-crypt4gh==0.1.0",
     "foca-plugin-tes-routing-distance==0.1.3",
 ]
 
@@ -59,6 +64,7 @@ experimental = [
 # scripts.checks check`; see "Releasing" in the docs)
 [tool.uv.sources]
 foca-plugin-generic-routing-random = { workspace = true }
+foca-plugin-tes-data-crypt4gh = { workspace = true }
 foca-plugin-tes-routing-distance = { workspace = true }
 
 [project.urls]
