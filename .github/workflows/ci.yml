@@ -151,7 +151,9 @@ jobs:
   # version (0.19.0, the first with the plugin store), the other releases
   # up to the newest (0.20.0, 0.21.0, 0.22.0) and FOCA's `dev` branch, so
   # that changes of the plugin API show before FOCA releases them (raise the lowest version with the plugins'
-  # lower bounds, and the newest with their upper bounds)
+  # lower bounds, and the newest with their upper bounds; the oldest also
+  # in the step `Check FOCA version`). Entries with a FOCA version that a
+  # plugin's `foca` requirement excludes skip the checks
   test:
     name: Test (${{ matrix.package.name }}, Python ${{ matrix.python-version }}, FOCA ${{ matrix.foca }})
     needs: changes
@@ -205,17 +207,28 @@ jobs:
           uv sync --locked --package "${NAME}" --group dev --python "$(which python)"
           uv pip install --reinstall-package foca "${FOCA_SPEC}"
           echo "${PWD}/.venv/bin" >> "$GITHUB_PATH"
+      # Whether the plugin's `foca` requirement allows the installed FOCA
+      # version (the further steps run only then, so that, e.g., a plugin
+      # that needs FOCA's `dev` branch skips the releases), and the oldest
+      # version of the matrix (if not, the `dev` entry reports coverage)
+      - name: Check FOCA version
+        id: foca
+        run: |
+          python -m scripts.packages foca "${PACKAGE}" 0.19.0 | tee -a "$GITHUB_OUTPUT"
       - name: Lint
+        if: ${{ steps.foca.outputs.supported == 'true' }}
         run: |
           ruff check "${PACKAGE}"
           ruff format --check "${PACKAGE}"
           ast-grep scan "${PACKAGE}"
       - name: Check types
+        if: ${{ steps.foca.outputs.supported == 'true' }}
         run: python -m scripts.packages mypy "${PACKAGE}"
       # The plugins' own tests include FOCA's plugin contract checks
       # (`check_plugin_contract` of `foca.plugins.testing`), as the
       # template's do; this step doesn't add them
       - name: Run tests
+        if: ${{ steps.foca.outputs.supported == 'true' }}
         run: |
           coverage run --source "${PACKAGE}/src" -m pytest "${PACKAGE}"
           coverage report
@@ -224,9 +237,15 @@ jobs:
       # request doesn't test, `codecov.yml`). Upload errors fail the workflow
       # only on pushes to this repository: pull requests from forks and
       # Dependabot get no access to the Codecov token, and forks have none
-      # (their CI passes on the tests and the coverage threshold alone)
+      # (their CI passes on the tests and the coverage threshold alone).
+      # Plugins that don't support the oldest FOCA version report from the
+      # entry of FOCA's `dev` branch
       - name: Submit report to Codecov
-        if: ${{ matrix.python-version == '3.13' && matrix.coverage }}
+        if: >-
+          ${{ matrix.python-version == '3.13' &&
+            steps.foca.outputs.supported == 'true' && (
+              matrix.coverage && steps.foca.outputs.oldest == 'true' ||
+              matrix.foca == 'dev' && steps.foca.outputs.oldest != 'true') }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -236,6 +255,7 @@ jobs:
           verbose: true
       # Known vulnerabilities of the plugin's runtime dependencies, as locked
       - name: Audit dependencies
+        if: ${{ steps.foca.outputs.supported == 'true' }}
         run: |
           uv export --frozen --package "${NAME}" --no-emit-workspace --no-default-groups \
             --no-hashes --format requirements-txt -o "${RUNNER_TEMP}/requirements.txt"

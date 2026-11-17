@@ -143,7 +143,18 @@ supported FOCA version, 0.19.0, the first release with the plugin store
 first release with the plugin API, is no longer supported), the later FOCA
 releases up to the newest, 0.20.0, 0.21.0 and 0.22.0 (the upper bounds are
 `<0.23`), and FOCA's `dev` branch, from Git, so that changes of the plugin API show before FOCA releases them. The
-development environment has the newest FOCA release (`uv.lock`).
+development environment has the newest FOCA release (`uv.lock`), or FOCA's
+`dev` branch while a plugin needs features that FOCA hasn't released yet
+(`[tool.uv.sources]` in the root `pyproject.toml`, locked to a commit).
+
+CI skips the checks of the FOCA versions that a plugin's `foca` requirement
+excludes (`python -m scripts.packages foca`, step "Check FOCA version"):
+a plugin that needs an unreleased feature of FOCA requires
+`foca>=<next patch version>.dev0` (e.g., `foca>=0.22.1.dev0,<0.24`, as
+`wes.workflow.trs` does), so that CI tests it with FOCA's `dev` branch
+only, and reports its coverage from there. Such a plugin can't be released
+before FOCA releases the feature: then raise its lower bound to that
+release, and remove the Git source.
 
 ## Changes and releases
 
