@@ -170,7 +170,6 @@ def test_parse_repo_file_ignores_other_urls(url: str) -> None:
         ("https://github.com/o/r/blob/a%2F%2Fb/w.cwl", "invalid ref"),
         ("https://github.com/o/r/blob/a%2F.b/w.cwl", "invalid ref"),
         ("https://github.com/o/r/blob/.a/w.cwl", "invalid ref"),
-        ("https://github.com/o/r/blob/-a/w.cwl", "invalid ref"),
         ("https://github.com/o/r/blob/a./w.cwl", "invalid ref"),
         ("https://github.com/o/r/blob/a.lock/w.cwl", "invalid ref"),
         ("https://github.com/o/r/blob/a@%7Bb/w.cwl", "invalid ref"),
@@ -196,6 +195,13 @@ def test_parse_repo_file_refuses_malformed_urls(url: str, message: str) -> None:
     """
     with pytest.raises(InvalidRepoUrl, match=message):
         parse_repo_file(url)
+
+
+def test_parse_repo_file_accepts_refs_with_leading_hyphen() -> None:
+    """Refs may start with `-` (e.g., tags), as they are encoded in URLs."""
+    repo = parse_repo_file("https://github.com/o/r/blob/-v1/w.cwl")
+    assert repo is not None
+    assert repo.archive_url == "https://codeload.github.com/o/r/tar.gz/-v1"
 
 
 def test_parse_repo_file_accepts_long_valid_refs() -> None:

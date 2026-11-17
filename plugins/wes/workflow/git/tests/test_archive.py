@@ -637,7 +637,12 @@ GITLAB_REPO = RepoFile(
 
 
 @pytest.mark.parametrize(
-    "location", ["https://gitlab.com/users/sign_in", "/users/sign_in/"]
+    "location",
+    [
+        "https://gitlab.com/users/sign_in",
+        "https://GitLab.com:443/users/sign_in",
+        "/users/sign_in/",
+    ],
 )
 def test_download_archive_rejects_missing_gitlab_projects(location: str) -> None:
     """GitLab's redirects to its sign-in page mean missing projects (`422`).
@@ -657,6 +662,8 @@ def test_download_archive_rejects_missing_gitlab_projects(location: str) -> None
     [
         (GITLAB_REPO, {"Location": "https://gitlab.com/g/q/-/archive/main/a.tar.gz"}),
         (GITLAB_REPO, {"Location": "https://[::1/users/sign_in"}),
+        (GITLAB_REPO, {"Location": "https://evil.example.org/users/sign_in"}),
+        (GITLAB_REPO, {"Location": "https://gitlab.com:99999/users/sign_in"}),
         (GITLAB_REPO, {}),
         (REPO, {"Location": "https://github.com/users/sign_in"}),
     ],

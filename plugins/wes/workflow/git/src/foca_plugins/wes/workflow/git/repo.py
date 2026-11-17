@@ -104,7 +104,8 @@ def _ref(value: str) -> str:
 
     Raises:
         InvalidRepoUrl: The ref is no valid Git ref name, e.g., `..`, or has
-            spaces or control characters.
+            spaces or control characters (refs may start with `-`, as tags
+            can).
     """
     try:
         ref = unquote(value, errors="strict")
@@ -114,7 +115,7 @@ def _ref(value: str) -> str:
         not ref
         or len(ref.encode("utf-8", "surrogatepass")) > MAX_REF_SIZE
         or _REF_FORBIDDEN.search(ref)
-        or ref.startswith(("/", ".", "-"))
+        or ref.startswith(("/", "."))
         or ref.endswith(("/", "."))
         or ref == "@"
     ):

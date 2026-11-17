@@ -23,6 +23,7 @@ from foca_plugins.wes.workflow.git.attach import (
     WORKFLOW_URL,
     FileLimits,
     check_names,
+    host_key,
     relative_path,
 )
 from foca_plugins.wes.workflow.git.repo import RepoFile
@@ -171,15 +172,17 @@ def _is_sign_in(repo: RepoFile, status: int, headers: dict[str, str]) -> bool:
         headers: Headers of the response, with lowercase names.
 
     Returns:
-        Whether the response redirects to the sign-in page of GitLab.
+        Whether the response redirects to the sign-in page of the same
+        GitLab host (also below a path prefix, e.g., `/gitlab/users/sign_in`).
     """
     if repo.service != "gitlab" or status not in (301, 302, 303, 307, 308):
         return False
     try:
         location = urlsplit(headers.get("location", ""))
+        host = host_key(location) if location.netloc else repo.host
     except ValueError:
         return False
-    return location.path.rstrip("/").endswith(GITLAB_SIGN_IN)
+    return host == repo.host and location.path.rstrip("/").endswith(GITLAB_SIGN_IN)
 
 
 def _segments(name: str) -> list[str]:
