@@ -12,4 +12,4 @@ in the docs).
 ### Features
 
 - Add the plugin `wes.routing.workflow-type`: route WES runs to the
-  backends that support their workflow type and engine (#86).
+  backends that support their workflow type and engine (#86, #92).
