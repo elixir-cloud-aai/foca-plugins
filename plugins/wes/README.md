@@ -10,5 +10,7 @@ Subgroups, with their plugins as `<subgroup>/<name>/`:
 
 - `workflow`: fetch workflows from elsewhere and attach them to runs
   - [`trs`](workflow/trs/): from a GA4GH TRS (`trs://` URIs)
+  - [`git`](workflow/git/): from public Git repositories of GitHub,
+    GitLab and Bitbucket (URLs of files at a ref)
 
 See [`plugins/README.md`](../README.md) for the groups and subgroups.
