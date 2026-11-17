@@ -44,10 +44,11 @@ FOCA 0.19 (the first release with the plugin store) to 0.22. Plugins so
 far, all experimental and released as 0.1.x: `generic.routing.random`,
 `tes.routing.distance` and `tes.data.crypt4gh`, plus the example
 `generic.example.noop`, the template of new plugins (never published).
-`wes.workflow.trs` (run WES workflows from a TRS) is not released yet: it
-needs FOCA's WES run requests, which are on FOCA's `dev` branch only. The
-latest release train is `foca-plugins` 0.3.0 (without `tes.data.crypt4gh`,
-which the next train pins).
+`wes.workflow.trs` and `wes.workflow.git` (run WES workflows from a TRS
+or from Git repositories) are not released yet: they need FOCA's WES run
+requests, which are on FOCA's `dev` branch only. The latest release train
+is `foca-plugins` 0.3.0 (without `tes.data.crypt4gh`, which the next train
+pins).
 <!-- --8<-- [end:status] -->
 
 **Read the [documentation][docs]** for installing plugins, writing them,
