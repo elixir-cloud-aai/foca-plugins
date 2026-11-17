@@ -21,9 +21,9 @@ build-constraint-dependencies = ["setuptools==84.2.1"]
 
 # FOCA from the head of its `dev` branch (locked to a commit in `uv.lock`),
 # as `wes.workflow.trs` and `wes.workflow.git` need the WES run requests of
-# the plugin API, which no FOCA release has yet. Applies to all packages of the workspace (they
-# share one resolution); CI still tests each plugin with the FOCA releases
-# that its dependencies allow. Remove it, and re-lock, once FOCA releases
+# the plugin API, which no FOCA release has yet. Applies to all packages of
+# the workspace (they share one resolution); CI still tests each plugin with
+# the FOCA releases that its dependencies allow. Remove it, and re-lock, once FOCA releases
 # them, with the lower bounds of `wes.workflow.trs` and `wes.workflow.git`
 # raised to that release
 [tool.uv.sources]

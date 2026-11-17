@@ -6,31 +6,26 @@ distribution. Each copy must be identical, so that a fix of one reaches
 all.
 """
 
-from pathlib import Path
-
 import pytest
 
 from scripts.packages import ROOT
 
-SHARED = {
-    "attach.py": [
-        "plugins/wes/workflow/trs/src/foca_plugins/wes/workflow/trs",
-        "plugins/wes/workflow/git/src/foca_plugins/wes/workflow/git",
-    ],
-}
-"""Shared modules (file names) and the package directories with a copy."""
+SHARED = {"attach.py": "plugins/wes/workflow/*/src/foca_plugins/wes/workflow/*"}
+"""Shared modules (file names) and the pattern of the packages with a copy;
+every module of that name in those packages is a copy."""
 
 
-@pytest.mark.parametrize(("name", "packages"), SHARED.items())
-def test_copies_are_identical(name: str, packages: list[str]) -> None:
+@pytest.mark.parametrize(("name", "pattern"), SHARED.items())
+def test_copies_are_identical(name: str, pattern: str) -> None:
     """Every copy of a shared module has the same content.
 
     Args:
         name: File name of the module.
-        packages: Directories of the packages with a copy.
+        pattern: Glob pattern of the packages with a copy.
     """
     copies = {
-        package: (Path(ROOT) / package / name).read_bytes() for package in packages
+        path: path.read_bytes() for path in sorted(ROOT.glob(f"{pattern}/{name}"))
     }
-    first = copies[packages[0]]
-    assert [p for p, content in copies.items() if content != first] == []
+    assert len(copies) >= 2
+    first = next(iter(copies.values()))
+    assert [str(p) for p, content in copies.items() if content != first] == []

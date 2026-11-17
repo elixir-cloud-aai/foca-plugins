@@ -76,7 +76,7 @@ plugins/<group>/<subgroup>/<name>/
   configuration (ruff, mypy, pytest, coverage) is shared there, too.
 - **Shared code:** plugins don't depend on each other. Helpers that several
   plugins need are copied into each of them, identical (e.g., `attach.py`
-  of the `wes.workflow` plugins); `tests/test_shared_modules.py` lists the
+  of the `wes.workflow` plugins); `tests/test_shared_modules.py` names the
   copies and checks that they stay the same, so change all copies together.
 - **README:** keep the summary between the `summary` markers: the [plugin
   catalogue](catalogue.md) shows it. Document every setting (`Config`) and
@@ -156,10 +156,10 @@ requirement excludes (`python -m scripts.packages foca`, step "Check FOCA
 version"); every plugin is tested with FOCA's `dev` branch:
 a plugin that needs an unreleased feature of FOCA requires
 `foca>=<next patch version>.dev0` (e.g., `foca>=0.22.1.dev0,<0.24`, as
-`wes.workflow.trs` and `wes.workflow.git` do), so that CI tests it with FOCA's `dev` branch
-only, and reports its coverage from there. Such a plugin can't be released
-before FOCA releases the feature: then raise its lower bound to that
-release, and remove the Git source.
+`wes.workflow.trs` and `wes.workflow.git` do), so that CI tests it with
+FOCA's `dev` branch only, and reports its coverage from there. Such a
+plugin can't be released before FOCA releases the feature: then raise its
+lower bound to that release, and remove the Git source.
 
 ## Changes and releases
 
