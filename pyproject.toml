@@ -19,6 +19,15 @@ default-groups = ["dev"]
 # update by hand
 build-constraint-dependencies = ["setuptools==84.2.1"]
 
+# FOCA from the head of its `dev` branch (locked to a commit in `uv.lock`),
+# as `wes.workflow.trs` needs the WES run requests of the plugin API, which
+# no FOCA release has yet. Applies to all packages of the workspace (they
+# share one resolution); CI still tests each plugin with the FOCA releases
+# that its dependencies allow. Remove it, and re-lock, once FOCA releases
+# them, with the lower bound of `wes.workflow.trs` raised to that release
+[tool.uv.sources]
+foca = { git = "https://github.com/elixir-cloud-aai/foca", branch = "dev" }
+
 [dependency-groups]
 # Local hooks of `.pre-commit-config.yaml` and CI use these too
 dev = [
