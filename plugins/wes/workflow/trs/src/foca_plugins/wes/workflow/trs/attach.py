@@ -4,9 +4,11 @@ Helpers for `wes` plugins that fetch a workflow from elsewhere (a TRS, a
 Git hosting service, ...) and attach its files to the run request
 (`workflow_attachment`, cf. FOCA's `foca.plugins.wes`): which hosts are
 allowed, the limits of the files, safe relative paths, and the change of
-the run itself. They know nothing of TRS, so that other `wes.workflow`
-plugins can reuse them (copy the module, or move it to a shared
-distribution once a second plugin needs it).
+the run itself. They know nothing of the sources, so that all
+`wes.workflow` plugins share them: as each plugin is a distribution of its
+own, each has an identical copy of this module (in `wes.workflow.trs` and
+`wes.workflow.git`), which `tests/test_shared_modules.py` of the
+repository checks; change all copies together.
 
 Errors that clients can fix, or that they should learn about, are
 rejections (:py:class:`foca.plugins.Rejected`), with messages that name
