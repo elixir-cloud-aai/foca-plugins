@@ -156,7 +156,7 @@ requirement excludes (`python -m scripts.packages foca`, step "Check FOCA
 version"); every plugin is tested with FOCA's `dev` branch:
 a plugin that needs an unreleased feature of FOCA requires
 `foca>=<next patch version>.dev0` (e.g., `foca>=0.22.1.dev0,<0.24`, as
-`wes.workflow.trs` and `wes.workflow.git` do), so that CI tests it with
+the `wes` plugins do), so that CI tests it with
 FOCA's `dev` branch only, and reports its coverage from there. Such a
 plugin can't be released before FOCA releases the feature: then raise its
 lower bound to that release, and remove the Git source.
