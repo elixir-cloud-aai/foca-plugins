@@ -415,6 +415,38 @@ def test_fetch_limits_listing_size(http: FakeHttp) -> None:
     assert info.value.status == 422
 
 
+def test_fetch_limits_descriptor_responses_in_total(http: FakeHttp) -> None:
+    """Descriptor responses share one budget, also with little content.
+
+    Large other fields of `FileWrapper`s count, so that many small
+    descriptors can't make the gateway parse much more than `max_size`.
+
+    Args:
+        http: Fake HTTP client.
+    """
+    files = [TrsFile(f"{i}.cwl", content=None) for i in range(3)]
+    serve(http, [TrsFile("main.cwl", "PRIMARY_DESCRIPTOR", None), *files])
+    wrapper = {"content": "x", "checksum": [{"type": "x", "checksum": "0" * 30_000}]}
+    for path in ["main.cwl", "0.cwl", "1.cwl", "2.cwl"]:
+        http.add("GET", descriptor_url(path), json=wrapper)
+    with pytest.raises(Rejected, match="larger than 10 bytes") as info:
+        fetch(http, max_size=10)
+    assert info.value.status == 413
+    assert len(http.calls) == 1 + 3
+
+
+def test_fetch_checks_count_before_paths(http: FakeHttp) -> None:
+    """Too many descriptors are rejected before their paths are checked.
+
+    Args:
+        http: Fake HTTP client.
+    """
+    serve(http, [TrsFile("main.cwl", "PRIMARY_DESCRIPTOR"), TrsFile("../a.cwl")])
+    with pytest.raises(Rejected) as info:
+        fetch(http, max_files=1)
+    assert info.value.status == 413
+
+
 def test_fetch_limits_descriptor_size_before_parsing(http: FakeHttp) -> None:
     """Descriptor responses that can't fit the size limit aren't parsed.
 
@@ -490,9 +522,9 @@ def test_plugin_class_is_valid() -> None:
 def test_settings_have_defaults() -> None:
     """No host is allowed by default; limits have defaults."""
     plugin = Trs(PLUGIN_ID, TrsConfig())
-    assert plugin.allowed_hosts == frozenset()
-    assert plugin.max_files == 100
-    assert plugin.max_size == 10 * 1024 * 1024
+    assert plugin.settings.allowed_hosts == frozenset()
+    assert plugin.settings.max_files == 100
+    assert plugin.settings.max_size == 10 * 1024 * 1024
 
 
 def test_settings_normalize_hosts() -> None:

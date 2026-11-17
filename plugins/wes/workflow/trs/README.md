@@ -74,9 +74,9 @@ an attached workflow or another `https` URL. It rejects the run:
 | `422` | The TRS has no such tool version with that descriptor type, or lacks a listed descriptor (`404`); there is no single primary descriptor; a path is unsafe (e.g., with `..`), listed twice, or a directory of another; a descriptor has no inline `content` (the plugin doesn't follow `url`s) or no valid text; the file listing is larger than 1 MiB, or a response larger than the gateway's `plugins.defaults.http.max_response_size`. |
 
 Responses are checked for size before they are parsed, so that a TRS
-can't make the gateway parse more than about 1 MiB of listing, or
-about six times what is left of `max_size` (JSON escapes) plus 64 KiB
-per descriptor. Other responses of the TRS (e.g.,
+can't make the gateway parse more than about 1 MiB of listing, and
+six times `max_size` (JSON escapes) plus 64 KiB of descriptor
+responses in total. Other responses of the TRS (e.g.,
 `5xx`, `401`, redirects, invalid JSON)
 fail the call (`TrsError`), as do errors of the HTTP client (e.g., refused
 addresses, timeouts): the step's `on_failure` applies.

@@ -17,6 +17,8 @@ The plugin API is documented in FOCA's `docs/plugins.md`
 (https://foca.readthedocs.io/en/latest/plugins/).
 """
 
+from dataclasses import dataclass
+
 from foca.plugins import Context, InboundRequest, NotApplicable, Plugin, Rejected
 from foca.plugins.base import EmptyModel
 from pydantic import BaseModel, ConfigDict, Field
@@ -61,13 +63,26 @@ class TrsConfig(BaseModel):
     max_size: int = Field(default=10 * 1024 * 1024, ge=1)
 
 
+@dataclass(frozen=True)
+class Settings:
+    """Settings of the plugin, from its admin settings (`TrsConfig`).
+
+    Attributes:
+        allowed_hosts: Allowed TRS hosts, normalized.
+        max_files: Maximum number of descriptor files.
+        max_size: Maximum total size of the descriptor files, in bytes.
+    """
+
+    allowed_hosts: frozenset[str]
+    max_files: int
+    max_size: int
+
+
 class Trs(Plugin[TrsConfig, EmptyModel]):
     """Run workflows from a GA4GH TRS.
 
     Attributes:
-        allowed_hosts: Allowed TRS hosts, normalized (`TrsConfig`).
-        max_files: Maximum number of descriptor files (`TrsConfig`).
-        max_size: Maximum total size of the descriptor files (`TrsConfig`).
+        settings: Settings, from `TrsConfig`.
     """
 
     Config = TrsConfig
@@ -89,19 +104,20 @@ class Trs(Plugin[TrsConfig, EmptyModel]):
     )
 
     # Set by `setup()`, from the admin settings
-    allowed_hosts: frozenset[str]
-    max_files: int
-    max_size: int
+    settings: Settings
 
     def setup(self, config: TrsConfig) -> None:
         """Keep the settings; idempotent, as `setup()` may run more than once.
 
+        The settings are replaced as a whole, so that calls never see a mix
+        of two configurations.
+
         Args:
             config: Validated admin settings.
         """
-        self.allowed_hosts = frozenset(config.allowed_hosts)
-        self.max_files = config.max_files
-        self.max_size = config.max_size
+        self.settings = Settings(
+            frozenset(config.allowed_hosts), config.max_files, config.max_size
+        )
 
     def on_request(self, request: InboundRequest, ctx: Context) -> None:
         """Fetch the workflow of a TRS URI and attach it to the run.
@@ -123,6 +139,7 @@ class Trs(Plugin[TrsConfig, EmptyModel]):
             RuntimeError: The context has no HTTP client.
             foca.utils.http.HttpError: A request failed (e.g., timeout).
         """
+        settings = self.settings  # once, as setup() may replace it
         run = request.payload
         url = run.get(WORKFLOW_URL) if isinstance(run, dict) else None
         if not isinstance(url, str):
@@ -133,7 +150,7 @@ class Trs(Plugin[TrsConfig, EmptyModel]):
             raise Rejected(f"{WORKFLOW_URL}: {exc}", 400) from None
         if tool is None:
             raise NotApplicable("workflow_url is no TRS URI")
-        check_host(tool.host, self.allowed_hosts, WORKFLOW_URL)
+        check_host(tool.host, settings.allowed_hosts, WORKFLOW_URL)
         type_ = descriptor_type(run.get("workflow_type"))
         if type_ is None:
             types = ", ".join(sorted(set(DESCRIPTOR_TYPES.values())))
@@ -143,7 +160,7 @@ class Trs(Plugin[TrsConfig, EmptyModel]):
         if ctx.http is None:
             raise RuntimeError("No HTTP client in the context")
         files = fetch_descriptors(
-            ctx.http, tool, type_, FileLimits(self.max_files, self.max_size)
+            ctx.http, tool, type_, FileLimits(settings.max_files, settings.max_size)
         )
         attach_workflow(run, files, files[0].filename)
         ctx.record("trs_host", tool.host)

@@ -51,7 +51,8 @@ JSON_OVERHEAD = 6
 `\\uXXXX` escapes)."""
 
 WRAPPER_OVERHEAD = 64 * 1024
-"""Size of the other fields of `FileWrapper`s (e.g., checksums), at most."""
+"""Size of the other fields of all `FileWrapper`s of a tool version (e.g.,
+checksums) together, at most."""
 
 # `https://<host>[/<prefix>]/ga4gh/trs/v2/tools/<id>/versions/<version>`,
 # with the ID and the version as one (encoded) segment each
@@ -207,7 +208,7 @@ def parse_tool_version(url: str) -> ToolVersion | None:
 
 def _get_json(
     http: GuardedClient, url: str, missing: str, max_size: int, too_large: Rejected
-) -> Any:
+) -> tuple[Any, int]:
     """Get a JSON document from the TRS.
 
     Args:
@@ -219,7 +220,7 @@ def _get_json(
         too_large: Rejection if the body is larger than `max_size`.
 
     Returns:
-        Parsed JSON.
+        Parsed JSON, and the size of the body.
 
     Raises:
         Rejected: The TRS answers `404` (`422`), the response is larger than
@@ -240,7 +241,7 @@ def _get_json(
     if len(response.content) > max_size:
         raise too_large
     try:
-        return response.json()
+        return response.json(), len(response.content)
     except ValueError:
         raise TrsError("TRS answered with invalid JSON") from None
 
@@ -290,7 +291,9 @@ def fetch_descriptors(
     Lists the files (`GET .../{type}/files`), then fetches the primary and
     the secondary descriptors (`GET .../{type}/descriptor/{relative_path}`,
     as JSON `FileWrapper`s with `content`), one after the other, within the
-    limits.
+    limits. The bodies of the descriptor responses together may take at
+    most `JSON_OVERHEAD` times `max_size` (JSON escapes) plus
+    `WRAPPER_OVERHEAD`; each is checked before it is parsed.
 
     Args:
         http: HTTP client (`ctx.http`).
@@ -313,29 +316,32 @@ def fetch_descriptors(
         foca.utils.http.HttpError: A request failed.
     """
     base = f"{tool.url}/{quote(type_, safe='')}"
-    listing = _get_json(
+    listing, _ = _get_json(
         http,
         f"{base}/files",
         f"TRS has no such tool version with type {type_}",
         MAX_LISTING_SIZE,
         Rejected(f"{WORKFLOW_URL}: TRS lists too many files", 422),
     )
-    paths = [relative_path(path) for path in _descriptor_paths(listing)]
+    listed = _descriptor_paths(listing)
+    limits.check_count(len(listed))
+    paths = [relative_path(path) for path in listed]
     check_names(
         [Attachment(path, b"") for path in paths],
         422,
         f"{WORKFLOW_URL}: TRS lists conflicting descriptors",
     )
-    limits.check_count(len(paths))
+    budget = limits.max_size * JSON_OVERHEAD + WRAPPER_OVERHEAD
     files: list[Attachment] = []
     for path in paths:
-        wrapper = _get_json(
+        wrapper, received = _get_json(
             http,
             f"{base}/descriptor/{quote(path, safe='')}",
             "TRS lacks a descriptor that it lists",
-            (limits.max_size - limits.size) * JSON_OVERHEAD + WRAPPER_OVERHEAD,
+            budget,
             limits.too_large(),
         )
+        budget -= received
         content = wrapper.get("content") if isinstance(wrapper, dict) else None
         if not isinstance(content, str):
             raise Rejected(
