@@ -25,8 +25,8 @@ from typing import Literal
 
 from foca.plugins import Backend, Context, NotApplicable, Plugin, Rejected
 from foca.plugins.base import EmptyModel
-from foca.utils.http import DeadlineExceeded, GuardedClient, HttpError
-from pydantic import BaseModel, ConfigDict, Field
+from foca.utils.http import GuardedClient, HttpError
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from foca_plugins.wes.routing.workflow_type.service_info import (
     Run,
@@ -42,6 +42,13 @@ __all__ = ["WorkflowType", "WorkflowTypeConfig"]
 # Absolute URL paths (RFC 3986: segments of unreserved and sub-delimiter
 # characters, `:`, `@` and percent-encodings), without query or fragment
 _PATH = r"^(/([A-Za-z0-9._~!$&'()*+,;=:@-]|%[0-9A-Fa-f]{2})+)+$"
+
+RESERVE = 0.25
+"""Seconds of the step's time kept for returning, as the engine discards
+results that come after the deadline: no request runs into them."""
+
+# Reasons of HTTP errors that mean that a request ran out of time
+_TIMEOUTS = frozenset({"deadline_exceeded", "read_timeout"})
 
 
 class WorkflowTypeConfig(BaseModel):
@@ -60,6 +67,9 @@ class WorkflowTypeConfig(BaseModel):
             request).
         cache_size: Maximum number of backends in the cache of the process;
             0 turns the cache off.
+        request_timeout: Seconds per service info request, so that one slow
+            backend leaves time for the others; within the step's time (less
+            `RESERVE`).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -71,6 +81,25 @@ class WorkflowTypeConfig(BaseModel):
     cache_ttl: int = Field(default=300, ge=0, le=86400)
     failure_ttl: int = Field(default=30, ge=0, le=86400)
     cache_size: int = Field(default=1000, ge=0, le=100_000)
+    request_timeout: float = Field(default=2.0, gt=0, le=60)
+
+    @field_validator("service_info_path")
+    @classmethod
+    def _no_dot_segments(cls, path: str) -> str:
+        """Refuse `.` and `..` segments, which would leave the base URL.
+
+        Args:
+            path: Path of the service info.
+
+        Returns:
+            The path.
+
+        Raises:
+            ValueError: The path has a `.` or `..` segment.
+        """
+        if any(segment in (".", "..") for segment in path.split("/")):
+            raise ValueError("must not have '.' or '..' segments")
+        return path
 
 
 @dataclass(frozen=True)
@@ -95,8 +124,8 @@ class _Counts:
         cache_hits: Backends found in the cache.
         unreadable: Backends whose service info couldn't be read, also the
             skipped ones.
-        skipped: Backends whose service info wasn't requested, or not sent,
-            as the step's deadline had passed.
+        skipped: Backends whose service info wasn't requested, or timed
+            out, as the step's time was (nearly) up.
     """
 
     fetched: int = 0
@@ -220,25 +249,50 @@ def _support(
     cached, support = runtime.cache.get(url)
     if cached:
         counts.cache_hits += 1
-    elif ctx.remaining() <= 0:
+    elif (budget := ctx.remaining() - RESERVE) <= 0:
         counts.skipped += 1
     else:
-        counts.fetched += 1
+        # the client is the call's own, so its timeout can be set per request
+        http.timeout = min(settings.request_timeout, budget)
         try:
             support = fetch_support(http, url)
-        except DeadlineExceeded:
-            # this call's deadline, not the backend's failure: not cached
-            counts.skipped += 1
-        except (HttpError, ServiceInfoError) as exc:
-            ctx.log.warning(
-                "Service info of backend %s unreadable: %s", backend.id, exc
-            )
-            runtime.cache.put(url, None, settings.failure_ttl)
+        except HttpError as exc:
+            if exc.reason in _TIMEOUTS and budget < settings.request_timeout:
+                # out of the step's time, not of the backend's: not cached
+                counts.skipped += 1
+            else:
+                _failed(backend, url, exc, runtime, ctx, counts)
+        except ServiceInfoError as exc:
+            _failed(backend, url, exc, runtime, ctx, counts)
         else:
+            counts.fetched += 1
             runtime.cache.put(url, support, settings.cache_ttl)
     if support is None:
         counts.unreadable += 1
     return support
+
+
+def _failed(
+    backend: Backend,
+    url: str,
+    exc: Exception,
+    runtime: _Runtime,
+    ctx: Context,
+    counts: _Counts,
+) -> None:
+    """Log and cache a backend whose service info couldn't be read.
+
+    Args:
+        backend: Candidate backend.
+        url: URL of its service info.
+        exc: Error of the request or of the service info.
+        runtime: Settings and cache of the call.
+        ctx: Context of the call.
+        counts: Counts of the call, updated.
+    """
+    counts.fetched += 1
+    ctx.log.warning("Service info of backend %s unreadable: %s", backend.id, exc)
+    runtime.cache.put(url, None, runtime.settings.failure_ttl)
 
 
 def _unsupported_detail(run: Run) -> str:

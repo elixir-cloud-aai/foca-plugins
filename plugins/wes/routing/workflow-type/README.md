@@ -56,11 +56,16 @@ the backend's error.
    are merged.
 4. Handles backends whose service info can't be read as `unreadable`
    says: `keep` them in their place (the default), or `drop` them.
-   Unreadable are: errors of the request (e.g., refused, timed out,
-   private address), statuses other than `200` (also redirects and
-   `401`), bodies that are no JSON object, and service infos without
-   `workflow_type_versions`, or with `workflow_type_versions` or
-   `workflow_engine_versions` that are no objects.
+   Unreadable are: errors of the request (e.g., refused, timed out
+   after `request_timeout`, private address), statuses other than `200`
+   (also redirects and `401`), bodies that are no JSON object, service
+   infos without `workflow_type_versions`, or with
+   `workflow_type_versions` or `workflow_engine_versions` that are no
+   objects, and service infos with more than 256 workflow types or
+   engines, or more than 1024 versions of them in all (so that no backend
+   makes the cache large); names and versions longer than 256 characters
+   are left out. Backends skipped for lack of the step's time (see
+   [Requests](#requests)) count as unreadable, too.
 
 The kept candidates are returned in their order, so that a later route
 step (e.g., [`generic.routing.random`](../../../generic/routing/random/README.md)
@@ -78,8 +83,8 @@ that no backend is available (`503`).
 
 Annotations, counts only: `candidates`, `kept`, `unsupported` (read, but
 not supporting the run), `unreadable` (also those skipped), `skipped`
-(not requested, or not sent, as the step's deadline had passed),
-`fetched` (requests sent) and `cache_hits`. The kept candidates are in the
+(not requested, or timed out, for lack of the step's time), `fetched`
+(service infos requested and answered, or failed) and `cache_hits`. The kept candidates are in the
 provenance of each request (`route.candidates_out`).
 
 ### Cache
@@ -87,8 +92,8 @@ provenance of each request (`route.candidates_out`).
 Each process keeps the service info of a backend, by its URL, for
 `cache_ttl` seconds (5 minutes), and a backend whose service info couldn't
 be read as unreadable for `failure_ttl` seconds (30 seconds), so that its
-failures aren't retried on every run; backends skipped for lack of time
-aren't cached. Beyond `cache_size` backends, the least recently used go;
+failures aren't retried on every run; backends skipped for lack of the
+step's time aren't cached. Beyond `cache_size` backends, the least recently used go;
 `cache_size: 0` (or both TTLs 0) turns the cache off. Changes of a
 backend's supports show after `cache_ttl` at the latest. The cache needs
 no plugin store, so the plugin works in gateways without a database (e.g.,
@@ -107,11 +112,20 @@ operator allows them for all plugins
 (`plugins.defaults.http.allow_private_addresses`, `allow_http`); weigh
 that against the risk of server-side request forgery by other plugins.
 
-Uncached backends are requested one after the other, all within the
-step's `timeout` (FOCA's `plugins.defaults.timeout`, 10 seconds, unless
-the step sets one): set it to fit a request to each of them. A slow
-backend uses up the time of the others: backends left when the deadline
-passes are skipped (and not cached, so that the next run requests them).
+The plugin needs the gateway's HTTP client: in a context without one
+(only in contexts built by hand, e.g., in tests), the call fails
+(`RuntimeError`), and the step's `on_failure` applies.
+
+Uncached backends are requested one after the other, each for at most
+`request_timeout` seconds, all within the step's `timeout` (FOCA's
+`plugins.defaults.timeout`, 10 seconds, unless the step sets one). The
+engine discards a hook's result that comes after the step's deadline, so
+the plugin keeps the last 0.25 seconds (`RESERVE`) for returning: no
+request runs into them. Backends left then, and requests cut short by
+the step's time rather than by `request_timeout`, are skipped: they count
+as unreadable for this run, but aren't cached, so that the next run
+requests them. Set the step's `timeout` to fit `request_timeout` for each
+backend that may be uncached at once, plus `RESERVE`.
 
 ## Configuration
 
@@ -135,11 +149,12 @@ plugins:
 
 | Setting | Type | Default | Description |
 | --- | --- | --- | --- |
-| `service_info_path` | string | `/ga4gh/wes/v1/service-info` | Path of the service info below each backend's base URL (FOCA's `Backend.url`, without the API's path): an absolute URL path, without query or fragment, at most 256 characters. |
+| `service_info_path` | string | `/ga4gh/wes/v1/service-info` | Path of the service info below each backend's base URL (FOCA's `Backend.url`, without the API's path): an absolute URL path, without query, fragment, `.` or `..` segments, at most 256 characters. |
 | `unreadable` | `keep` or `drop` | `keep` | What to do with backends whose service info can't be read: keep them in their place (runs may fail on them, then the gateway's failover goes on), or drop them (runs never go to backends of unknown support, but none may be left). |
 | `cache_ttl` | integer | `300` | Seconds to keep the service info of a backend (0 to 86400). |
 | `failure_ttl` | integer | `30` | Seconds to keep a backend whose service info couldn't be read as unreadable (0 to 86400). |
 | `cache_size` | integer | `1000` | Maximum number of backends in the cache of each process (0 to 100000); 0 turns the cache off. |
+| `request_timeout` | number | `2.0` | Seconds per service info request (more than 0, at most 60), so that one slow backend leaves time for the others; a backend that takes longer is unreadable (and cached as such for `failure_ttl`). |
 
 The plugin has no parameters (`params`).
 

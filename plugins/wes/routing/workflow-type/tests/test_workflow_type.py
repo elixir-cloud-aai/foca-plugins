@@ -8,9 +8,12 @@ through its installed entry point, as gateway apps do.
 """
 
 from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.metadata import entry_points
+import json
 from pathlib import Path
 import re
+import threading
 import time
 from typing import Any
 
@@ -32,16 +35,20 @@ from foca.plugins.testing import (
     make_backend,
     make_inbound,
 )
-from foca.utils.http import DeadlineExceeded, RequestNotSent
+from foca.utils.http import DeadlineExceeded, RequestMaybeSent, RequestNotSent
 from pydantic import ValidationError
 import pytest
 import yaml  # type: ignore[import-untyped]  # PyYAML (a dependency of FOCA) has no stubs here
 
 from foca_plugins.wes.routing.workflow_type import (
+    RESERVE,
     WorkflowType,
     WorkflowTypeConfig,
 )
 from foca_plugins.wes.routing.workflow_type.service_info import (
+    MAX_ENTRIES,
+    MAX_LENGTH,
+    MAX_VERSIONS,
     SupportCache,
     parse_support,
 )
@@ -284,12 +291,17 @@ def test_settings_have_defaults() -> None:
         {"service_info_path": "/service-info?x=1"},
         {"service_info_path": "/service-info#x"},
         {"service_info_path": "/service info"},
+        {"service_info_path": "/../service-info"},
+        {"service_info_path": "/ga4gh/./service-info"},
+        {"service_info_path": "/wes/.."},
         {"service_info_path": "/%zz"},
         {"service_info_path": "/" + "a" * 256},
         {"unreadable": "maybe"},
         {"cache_ttl": -1},
         {"failure_ttl": 86401},
         {"cache_size": -1},
+        {"request_timeout": 0},
+        {"request_timeout": 61},
     ],
 )
 def test_settings_are_validated(data: dict[str, Any]) -> None:
@@ -673,22 +685,204 @@ def test_service_info_path_is_configurable() -> None:
 
 
 def test_no_time_left_skips_backends_uncached(http: FakeHttp) -> None:
-    """Without time left, backends count as unreadable, but aren't cached.
+    """Within `RESERVE` of the deadline, backends aren't requested or cached.
 
     Args:
         http: HTTP client.
     """
     plugin = make_plugin(unreadable="drop")
-    ctx = make_context(http=http, seconds=-1)
+    ctx = make_context(http=http, seconds=RESERVE / 2)
     assert route(plugin, [backend("a"), backend("b")], ctx) == []
     assert http.calls == []
     assert (ctx.annotations["skipped"], ctx.annotations["unreadable"]) == (2, 2)
-    http.add("GET", info_url("x"), error=DeadlineExceeded("late"))
-    ctx = make_context(http=http)
+    assert ctx.annotations["fetched"] == 0
+    assert plugin.runtime.cache.get(info_url("a")) == (False, None)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        DeadlineExceeded("late"),
+        RequestMaybeSent("deadline passed", reason="read_timeout"),
+    ],
+)
+def test_timeouts_within_the_step_time_are_skipped(
+    http: FakeHttp, error: Exception
+) -> None:
+    """Timeouts cut short by the step's time aren't the backend's failure.
+
+    With less time left than `request_timeout`, a timed-out backend is
+    skipped and not cached; with the full `request_timeout`, it is
+    unreadable and cached for `failure_ttl`.
+
+    Args:
+        http: HTTP client.
+        error: Timeout of the request.
+    """
+    http.add("GET", info_url("x"), error=error)
+    plugin = make_plugin(unreadable="drop", request_timeout=2)
+    ctx = make_context(http=http, seconds=1)
     assert route(plugin, [backend("x"), backend("a")], ctx) == ["a"]
-    assert (ctx.annotations["skipped"], ctx.annotations["fetched"]) == (1, 2)
+    assert (ctx.annotations["skipped"], ctx.annotations["fetched"]) == (1, 1)
     assert plugin.runtime.cache.get(info_url("x")) == (False, None)
-    assert plugin.runtime.cache.get(info_url("a"))[0] is True
+    ctx = make_context(http=http, seconds=10)
+    assert route(plugin, [backend("x"), backend("a")], ctx) == ["a"]
+    assert (ctx.annotations["skipped"], ctx.annotations["fetched"]) == (0, 1)
+    assert plugin.runtime.cache.get(info_url("x")) == (True, None)
+
+
+def test_requests_are_bounded_by_request_timeout(http: FakeHttp) -> None:
+    """Each request gets `request_timeout`, or the step's time less `RESERVE`.
+
+    Args:
+        http: HTTP client.
+    """
+    plugin = make_plugin(request_timeout=0.5, cache_size=0)
+    ctx = make_context(http=http, seconds=10)
+    plugin.on_route([backend("a")], ctx)
+    assert ctx.http is not None
+    assert ctx.http.timeout == 0.5
+    ctx = make_context(http=http, seconds=0.5)
+    plugin.on_route([backend("a")], ctx)
+    assert ctx.http is not None
+    assert 0 < ctx.http.timeout <= 0.5 - RESERVE
+
+
+@pytest.mark.parametrize(
+    "info",
+    [
+        service_info({f"t{i}": {} for i in range(MAX_ENTRIES + 1)}),
+        service_info(engines={f"e{i}": "1" for i in range(MAX_ENTRIES + 1)}),
+        service_info(
+            {
+                "CWL": {"workflow_type_version": ["v"] * (MAX_VERSIONS // 2)},
+                "WDL": {"workflow_type_version": ["v"] * (MAX_VERSIONS // 2 + 1)},
+            }
+        ),
+    ],
+    ids=["types", "engines", "versions"],
+)
+def test_large_service_infos_are_unreadable(
+    info: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Service infos beyond the limits are unreadable, so the cache stays small.
+
+    Args:
+        info: Service info.
+        caplog: Pytest fixture.
+    """
+    http = FakeHttp()
+    http.add("GET", info_url("a"), json=info)
+    ctx = make_context(http=http)
+    assert route(make_plugin(), [backend("a")], ctx) == ["a"]
+    assert ctx.annotations["unreadable"] == 1
+    assert "more than" in caplog.text
+
+
+def test_long_names_and_versions_are_left_out() -> None:
+    """Names and versions longer than `MAX_LENGTH` count as not listed."""
+    long = "x" * (MAX_LENGTH + 1)
+    support = parse_support(
+        {
+            "workflow_type_versions": {
+                long: {},
+                "CWL": {"workflow_type_version": [long, "v1.2"]},
+            }
+        }
+    )
+    assert support.types == {"cwl": frozenset({"v1.2"})}
+
+
+class _SlowBackends(BaseHTTPRequestHandler):
+    """Local WES backends: `/fast` answers at once, `/slow` after 3 seconds."""
+
+    def do_GET(self) -> None:
+        """Answer with a service info, slowly below `/slow`."""
+        if self.path.startswith("/slow"):
+            time.sleep(3)
+        body = json.dumps(service_info()).encode()
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        except OSError:  # pragma: no cover (the client gave up)
+            pass
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Log nothing.
+
+        Args:
+            format: Format of the message.
+            args: Arguments of the message.
+        """
+
+
+@pytest.fixture
+def slow_server() -> Iterator[str]:
+    """Run local backends on a free port.
+
+    Yields:
+        Base URL of the server.
+    """
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _SlowBackends)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+    server.server_close()
+
+
+def test_slow_backend_leaves_the_route_in_time(slow_server: str) -> None:
+    """Through the engine, a slow backend is skipped before the step's deadline.
+
+    The engine discards results that come after the deadline; the plugin
+    stops waiting for the slow backend `RESERVE` before it, so that the
+    route of the fast one stands, and doesn't cache the slow one.
+
+    Args:
+        slow_server: Base URL of the local backends.
+    """
+    conf = PluginsConfig.model_validate(
+        {
+            "defaults": {"http": {"allow_private_addresses": True, "allow_http": True}},
+            "available": {
+                PLUGIN_ID: {
+                    "config": {
+                        "unreadable": "drop",
+                        "service_info_path": "/service-info",
+                    }
+                }
+            },
+            "pipeline": [
+                {
+                    "id": "workflow-type",
+                    "timeout": 1.5,
+                    "alternatives": [{"plugin": PLUGIN_ID}],
+                }
+            ],
+        }
+    )
+    host = PluginHost(conf, api="wes")
+    try:
+        run = host.start(make_inbound(make_run()), Principal(subject="alice"))
+        run.request()
+        candidates = [
+            make_backend("fast", f"{slow_server}/fast"),
+            make_backend("slow", f"{slow_server}/slow"),
+        ]
+        started = time.monotonic()
+        routed = run.route(candidates)
+        assert time.monotonic() - started < 1.5
+        (execution,) = run.executions
+        assert execution.outcome == "ok"
+        assert [b.id for b in routed] == ["fast"]
+        assert execution.annotations["skipped"] == 1
+        assert execution.annotations["fetched"] == 1
+    finally:
+        host.close()
 
 
 @pytest.mark.parametrize(

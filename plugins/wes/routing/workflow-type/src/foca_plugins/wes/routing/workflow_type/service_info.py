@@ -27,6 +27,16 @@ ENGINE_VERSIONS = "workflow_engine_versions"
 Versions = frozenset[str] | None
 """Versions of a workflow type or engine; `None` for any version."""
 
+MAX_ENTRIES = 256
+"""Maximum number of workflow types, and of engines, of a service info."""
+
+MAX_VERSIONS = 1024
+"""Maximum number of versions of the workflow types, and of the engines, of
+a service info, in all."""
+
+MAX_LENGTH = 256
+"""Maximum length of names and versions; longer ones are left out."""
+
 
 class ServiceInfoError(Exception):
     """The service info of a backend can't be read or has no supports."""
@@ -121,28 +131,42 @@ def _versions(entries: object, key: str, field: str) -> dict[str, Versions]:
         versions under `key` (missing or empty: any version), or, as
         `workflow_engine_versions` of WES 1.0, a version string. Versions
         that aren't strings are left out; entries of other shapes are
-        skipped, as if not listed.
+        skipped, as if not listed; names and versions longer than
+        :py:data:`MAX_LENGTH` are left out, too.
 
     Raises:
-        ServiceInfoError: The field is no object.
+        ServiceInfoError: The field is no object, or it has more than
+            :py:data:`MAX_ENTRIES` entries or :py:data:`MAX_VERSIONS`
+            versions in all, so that no backend makes the cache large.
     """
     if not isinstance(entries, Mapping):
         raise ServiceInfoError(f"{field}: no object")
+    if len(entries) > MAX_ENTRIES:
+        raise ServiceInfoError(f"{field}: more than {MAX_ENTRIES} entries")
     versions: dict[str, Versions] = {}
+    total = 0
     for name, entry in entries.items():
-        if not isinstance(name, str):
-            continue  # JSON keys are strings; for other mappings only
+        # JSON keys are strings; others only in mappings built by hand
+        if not isinstance(name, str) or len(name) > MAX_LENGTH:
+            continue
         listed: Versions
         if isinstance(entry, str):
-            listed = frozenset({entry})
+            values: object = [entry]
         elif isinstance(entry, Mapping):
             values = entry.get(key)
-            if values is None or values == []:
-                listed = None
-            elif isinstance(values, list):
-                listed = frozenset(value for value in values if isinstance(value, str))
-            else:
-                continue
+        else:
+            continue
+        if values is None or values == []:
+            listed = None
+        elif isinstance(values, list):
+            total += len(values)
+            if total > MAX_VERSIONS:
+                raise ServiceInfoError(f"{field}: more than {MAX_VERSIONS} versions")
+            listed = frozenset(
+                value
+                for value in values
+                if isinstance(value, str) and len(value) <= MAX_LENGTH
+            )
         else:
             continue
         folded = name.casefold()
