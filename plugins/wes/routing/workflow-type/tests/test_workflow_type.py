@@ -300,6 +300,7 @@ def test_settings_have_defaults() -> None:
         {"cache_ttl": -1},
         {"failure_ttl": 86401},
         {"cache_size": -1},
+        {"cache_size": 10_001},
         {"request_timeout": 0},
         {"request_timeout": 61},
         {"max_size": 1023},
@@ -387,6 +388,12 @@ def test_types_without_versions_support_any(entry: dict[str, Any]) -> None:
         ({"workflow_type": "WDL", "workflow_type_version": None}, None),
         ({"workflow_type": "NFL", "workflow_type_version": "DSL2"}, ["a"]),
         ({"workflow_type": "NFL", "workflow_type_version": "1"}, None),
+        # a version string, as for engines of WES 1.0: no type entry
+        ({"workflow_type": "SMK", "workflow_type_version": "8"}, None),
+        ({"workflow_type": "SMK", "workflow_type_version": None}, None),
+        # a version list that is `null`: no wildcard
+        ({"workflow_type": "GALAXY", "workflow_type_version": "1"}, None),
+        ({"workflow_type": "GALAXY", "workflow_type_version": None}, None),
     ],
 )
 def test_type_entries_of_other_shapes(
@@ -403,6 +410,8 @@ def test_type_entries_of_other_shapes(
         "CWL": {"workflow_type_version": "v1.2"},
         "WDL": ["1.0"],
         "NFL": {"workflow_type_version": [1, "DSL2"]},
+        "SMK": "8",
+        "GALAXY": {"workflow_type_version": None},
     }
     http.add("GET", info_url("a"), json=service_info(types))
     ctx = make_context(make_run(**fields), http)
@@ -537,6 +546,7 @@ UNREADABLE: list[dict[str, Any]] = [
     {"status": 401, "json": service_info()},
     {"status": 302, "headers": {"Location": "https://x.example.org/"}},
     {"content": b"<html>"},
+    {"content": b"[" * 100_000 + b"]" * 100_000},  # nested too deeply
     {"json": ["CWL"]},
     {"json": {"id": "org.example.wes"}},
     {"json": {"workflow_type_versions": None}},

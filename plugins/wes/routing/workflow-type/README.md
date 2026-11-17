@@ -51,7 +51,9 @@ the backend's error.
    supports every version. Engines of WES 1.0 service infos, whose
    `workflow_engine_versions` map engines to one version string, support
    that version. Backends without `workflow_engine_versions` support no
-   engine. Entries of other shapes are skipped (as not listed), and so are
+   engine (also with `workflow_engine_versions: null`). Entries of other
+   shapes (e.g., a version string for a workflow type, or a version list
+   that is `null`) are skipped (as not listed), and so are
    versions that are no strings; entries of the same name in another case
    are merged.
 4. Handles backends whose service info can't be read as `unreadable`
@@ -62,9 +64,9 @@ the backend's error.
    infos without `workflow_type_versions`, or with
    `workflow_type_versions` or `workflow_engine_versions` that are no
    objects, and service infos with more than 256 workflow types or
-   engines, or more than 1024 versions of the types, or of the engines,
+   engines, or more than 256 versions of the types, or of the engines,
    each in all (so that no backend
-   makes the cache large); names and versions longer than 256 characters
+   makes the cache large); names and versions longer than 64 characters
    are left out. Backends skipped for lack of the step's time (see
    [Requests](#requests)) count as unreadable, too.
 
@@ -161,7 +163,7 @@ plugins:
 | `unreadable` | `keep` or `drop` | `keep` | What to do with backends whose service info can't be read: keep them in their place (runs may fail on them, then the gateway's failover goes on), or drop them (runs never go to backends of unknown support, but none may be left). |
 | `cache_ttl` | integer | `300` | Seconds to keep the service info of a backend (0 to 86400). |
 | `failure_ttl` | integer | `30` | Seconds to keep a backend whose service info couldn't be read as unreadable (0 to 86400). |
-| `cache_size` | integer | `1000` | Maximum number of backends in the cache of each process (0 to 100000); 0 turns the cache off. |
+| `cache_size` | integer | `1000` | Maximum number of backends in the cache of each process (0 to 10000); 0 turns the cache off. Each backend takes at most about 64 KiB of names and versions (the limits above), so 1000 backends at most about 64 MiB. |
 | `request_timeout` | number | `2.0` | Seconds per service info request (more than 0, at most 60), so that one slow backend leaves time for the others; a backend that takes longer is unreadable (and cached as such for `failure_ttl`). |
 | `max_size` | integer | `262144` | Maximum size of a service info, in bytes (1024 to 16777216), and at most the gateway's `plugins.defaults.http.max_response_size`; larger ones are unreadable. |
 

@@ -83,7 +83,7 @@ class WorkflowTypeConfig(BaseModel):
     unreadable: Literal["keep", "drop"] = "keep"
     cache_ttl: int = Field(default=300, ge=0, le=86400)
     failure_ttl: int = Field(default=30, ge=0, le=86400)
-    cache_size: int = Field(default=1000, ge=0, le=100_000)
+    cache_size: int = Field(default=1000, ge=0, le=10_000)
     request_timeout: float = Field(default=2.0, gt=0, le=60)
     max_size: int = Field(default=256 * 1024, ge=1024, le=16 * 1024 * 1024)
 

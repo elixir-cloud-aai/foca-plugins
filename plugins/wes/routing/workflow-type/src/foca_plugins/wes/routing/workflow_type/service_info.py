@@ -30,12 +30,18 @@ Versions = frozenset[str] | None
 MAX_ENTRIES = 256
 """Maximum number of workflow types, and of engines, of a service info."""
 
-MAX_VERSIONS = 1024
+MAX_VERSIONS = 256
 """Maximum number of versions of the workflow types, and of the engines, of
 a service info, in all."""
 
-MAX_LENGTH = 256
-"""Maximum length of names and versions; longer ones are left out."""
+MAX_LENGTH = 64
+"""Maximum length of names and versions; longer ones are left out.
+
+With :py:data:`MAX_ENTRIES` and :py:data:`MAX_VERSIONS`, a cached backend
+holds at most about 64 KiB of names and versions."""
+
+ENGINE_VERSION = "workflow_engine_version"
+"""Key of the version list of an engine."""
 
 
 class ServiceInfoError(Exception):
@@ -128,11 +134,12 @@ def _versions(entries: object, key: str, field: str) -> dict[str, Versions]:
 
     Returns:
         Versions by name, case-folded. Entries are objects with a list of
-        versions under `key` (missing or empty: any version), or, as
-        `workflow_engine_versions` of WES 1.0, a version string. Versions
-        that aren't strings are left out; entries of other shapes are
-        skipped, as if not listed; names and versions longer than
-        :py:data:`MAX_LENGTH` are left out, too.
+        versions under `key` (missing or empty: any version), or, for
+        engines only (`workflow_engine_versions` of WES 1.0), a version
+        string. Versions that aren't strings are left out; entries of other
+        shapes (also with `key` set to `null`) are skipped, as if not
+        listed; names and versions longer than :py:data:`MAX_LENGTH` are
+        left out, too.
 
     Raises:
         ServiceInfoError: The field is no object, or it has more than
@@ -150,13 +157,13 @@ def _versions(entries: object, key: str, field: str) -> dict[str, Versions]:
         if not isinstance(name, str) or len(name) > MAX_LENGTH:
             continue
         listed: Versions
-        if isinstance(entry, str):
+        if isinstance(entry, str) and key == ENGINE_VERSION:
             values: object = [entry]
         elif isinstance(entry, Mapping):
-            values = entry.get(key)
+            values = entry.get(key, [])  # `null` is no list: skipped below
         else:
             continue
-        if values is None or values == []:
+        if values == []:
             listed = None
         elif isinstance(values, list):
             total += len(values)
@@ -249,7 +256,7 @@ def parse_support(info: object) -> Support:
     engines = (
         {}
         if engines_field is None
-        else _versions(engines_field, "workflow_engine_version", ENGINE_VERSIONS)
+        else _versions(engines_field, ENGINE_VERSION, ENGINE_VERSIONS)
     )
     return Support(types=types, engines=engines)
 
@@ -274,7 +281,7 @@ def fetch_support(http: GuardedClient, url: str) -> Support:
         raise ServiceInfoError(f"status {response.status}")
     try:
         info = response.json()
-    except ValueError:
+    except (ValueError, RecursionError):  # also nested too deeply
         raise ServiceInfoError("no valid JSON") from None
     return parse_support(info)
 
