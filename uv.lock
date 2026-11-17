@@ -12,6 +12,7 @@ members = [
     "foca-plugin-generic-routing-random",
     "foca-plugin-tes-data-crypt4gh",
     "foca-plugin-tes-routing-distance",
+    "foca-plugin-wes-routing-workflow-type",
     "foca-plugin-wes-workflow-git",
     "foca-plugin-wes-workflow-trs",
     "foca-plugins",
@@ -1335,6 +1336,21 @@ dependencies = [
 requires-dist = [
     { name = "foca", git = "https://github.com/elixir-cloud-aai/foca?branch=dev" },
     { name = "maxminddb", specifier = ">=2.6,<4" },
+    { name = "pydantic", specifier = ">=2.7,<3" },
+]
+
+[[package]]
+name = "foca-plugin-wes-routing-workflow-type"
+version = "0.1.0"
+source = { editable = "plugins/wes/routing/workflow-type" }
+dependencies = [
+    { name = "foca" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "foca", git = "https://github.com/elixir-cloud-aai/foca?branch=dev" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 

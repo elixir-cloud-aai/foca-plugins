@@ -34,9 +34,9 @@ FOCA versions that it declares.
 
 The column "Now" shows the extras on `dev`, for the next release train;
 `tes.data.crypt4gh` and the extra `[tes-data]` are in no released train yet.
-`wes.workflow.trs` and `wes.workflow.git` are in no extra yet: they can't
-be released before FOCA releases the WES run requests of its plugin API,
-which they need (see their READMEs).
+`wes.workflow.trs`, `wes.workflow.git` and `wes.routing.workflow-type` are
+in no extra yet: they can't be released before FOCA releases the WES run
+requests of its plugin API, which they need (see their READMEs).
 
 For example:
 
