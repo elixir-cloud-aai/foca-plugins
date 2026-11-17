@@ -78,12 +78,13 @@ run:
 | `403` | The host isn't in `allowed_hosts` (by default, every host). |
 | `409` | A fetched file has the name of a file that the client attached (also after NFKC normalization and ignoring case), or is a directory of it, or inside it. |
 | `413` | The repository (or directory) has more than `max_files` files, or they are larger than `max_size` in total; the decompressed archive is larger than `max_archive_size`; or the archive is larger than the gateway's `plugins.defaults.http.max_response_size`. |
-| `422` | The host has no such public repository or ref (`404`; private repositories look the same); the main file is not in the attached files; the archive has an entry with an unsafe path (absolute, or with `..` or `.` segments) or no single top directory; the files to attach include a symbolic or hard link, a special entry (device, FIFO, sparse file), a filename that is no safe attachment filename, or names that conflict (e.g., `README` and `readme`). |
+| `422` | The host has no such public repository or ref (`404`, or GitLab's redirect to its sign-in page for missing projects; private repositories look the same); the main file is not in the attached files; the archive has an entry with an unsafe path (absolute, or with `..` or `.` segments) or a path longer than 4096 characters, or no single top directory; the files to attach include a symbolic or hard link, a special entry (device, FIFO, sparse file), a filename that is no safe attachment filename, or names that conflict (e.g., `README` and `readme`). |
 
-Other answers of the host (e.g., `5xx`, `401`, `403`, redirects) and
-archives that are no valid `tar.gz` files fail the call (`GitError`), as do
-errors of the HTTP client (e.g., refused addresses, timeouts): the step's
-`on_failure` applies.
+Other answers of the host (e.g., `5xx`, `401`, `403`, other redirects)
+and archives that are no valid `tar.gz` files (e.g., with an invalid
+header, or without the zero blocks that end `tar` files) fail the call
+(`GitError`), as do errors of the HTTP client (e.g., refused addresses,
+timeouts): the step's `on_failure` applies.
 
 Archives are untrusted: they are decompressed as a stream whose size is
 checked while it is read, so that archive bombs (also huge headers) stop at

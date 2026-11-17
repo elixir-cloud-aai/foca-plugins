@@ -13,6 +13,7 @@ from collections.abc import Callable
 import gzip
 import io
 import tarfile
+from urllib.parse import urlsplit
 import zlib
 
 from foca.plugins import Attachment, Rejected
@@ -29,8 +30,18 @@ from foca_plugins.wes.workflow.git.repo import RepoFile
 MEDIA_TYPE = "application/octet-stream"
 """Media type of the attached files."""
 
+MAX_NAME_SIZE = 4096
+"""Maximum length of the names of archive entries, in characters (as Git
+allows for paths)."""
+
+GITLAB_SIGN_IN = "/users/sign_in"
+"""Path that GitLab redirects to for missing and private projects."""
+
 _REGULAR = (tarfile.REGTYPE, tarfile.AREGTYPE)
 _LINKS = (tarfile.SYMTYPE, tarfile.LNKTYPE)
+# Bytes of the decompressed stream kept for the check of the end of the
+# archive: more than `tarfile` reads ahead (`tarfile.RECORDSIZE`)
+_TAIL_SIZE = 64 * 1024
 
 
 class GitError(RuntimeError):
@@ -40,8 +51,12 @@ class GitError(RuntimeError):
 class _BoundedReader:
     """Readable stream that fails once more than a limit has been read.
 
+    It keeps the last bytes read, so that the end of the archive, which
+    `tarfile` has read ahead, can be checked.
+
     Attributes:
         remaining: Bytes that may still be read.
+        position: Bytes read so far.
     """
 
     def __init__(
@@ -57,7 +72,9 @@ class _BoundedReader:
         """
         self._read = read
         self.remaining = limit
+        self.position = 0
         self._too_large = too_large
+        self._tail = bytearray()
 
     def read(self, size: int = -1) -> bytes:
         """Read from the source, at most one byte beyond the limit.
@@ -76,7 +93,35 @@ class _BoundedReader:
         self.remaining -= len(data)
         if self.remaining < 0:
             raise self._too_large
+        self.position += len(data)
+        self._tail += data
+        del self._tail[:-_TAIL_SIZE]
         return data
+
+    def is_end(self, offset: int) -> bool:
+        """Check that the stream has only zero blocks from an offset on.
+
+        Reads the rest of the stream (within the limit).
+
+        Args:
+            offset: Offset in the stream, at most `_TAIL_SIZE` bytes before
+                the bytes read so far.
+
+        Returns:
+            Whether the bytes from the offset to the end are at least one
+            block (`tarfile.BLOCKSIZE`), all zero.
+        """
+        start = self.position - len(self._tail)
+        if offset < start:
+            return False
+        zeros = len(self._tail) - (offset - start)
+        if self._tail[offset - start :].count(0) != zeros:
+            return False
+        while data := self.read(_TAIL_SIZE):
+            if data.count(0) != len(data):
+                return False
+            zeros += len(data)
+        return zeros >= tarfile.BLOCKSIZE
 
 
 def download_archive(http: GuardedClient, repo: RepoFile) -> bytes:
@@ -91,10 +136,11 @@ def download_archive(http: GuardedClient, repo: RepoFile) -> bytes:
 
     Raises:
         Rejected: The service has no such repository or ref, e.g., as the
-            repository is private (`404`; `422`), or the archive is larger
-            than the client allows (`413`).
-        GitError: The service answered with another status than `200` or
-            `404` (e.g., a redirect or `5xx`).
+            repository is private (`404`, or GitLab's redirect to its sign-in
+            page; `422`), or the archive is larger than the client allows
+            (`413`).
+        GitError: The service answered otherwise than with `200` (e.g., with
+            another redirect or `5xx`).
         foca.utils.http.HttpError: The request failed.
     """
     try:
@@ -104,13 +150,36 @@ def download_archive(http: GuardedClient, repo: RepoFile) -> bytes:
             f"{WORKFLOW_URL}: repository archive is larger than the gateway allows",
             413,
         ) from None
-    if response.status == 404:
+    if response.status == 404 or _is_sign_in(repo, response.status, response.headers):
         raise Rejected(
             f"{WORKFLOW_URL}: no such public repository or ref at the host", 422
         )
     if response.status != 200:
         raise GitError(f"{repo.service} answered {response.status}")
     return response.content
+
+
+def _is_sign_in(repo: RepoFile, status: int, headers: dict[str, str]) -> bool:
+    """Check whether GitLab redirects to its sign-in page.
+
+    GitLab answers so for missing and private projects (and `404` for
+    missing refs of existing ones).
+
+    Args:
+        repo: File of the repository.
+        status: HTTP status of the response.
+        headers: Headers of the response, with lowercase names.
+
+    Returns:
+        Whether the response redirects to the sign-in page of GitLab.
+    """
+    if repo.service != "gitlab" or status not in (301, 302, 303, 307, 308):
+        return False
+    try:
+        location = urlsplit(headers.get("location", ""))
+    except ValueError:
+        return False
+    return location.path.rstrip("/").endswith(GITLAB_SIGN_IN)
 
 
 def _segments(name: str) -> list[str]:
@@ -123,9 +192,11 @@ def _segments(name: str) -> list[str]:
         Segments.
 
     Raises:
-        Rejected: The name is absolute, or has an empty, `.` or `..` segment
-            (`422`).
+        Rejected: The name is longer than `MAX_NAME_SIZE`, absolute, or has
+            an empty, `.` or `..` segment (`422`).
     """
+    if len(name) > MAX_NAME_SIZE:
+        raise Rejected(f"{WORKFLOW_URL}: repository archive has a too long path", 422)
     segments = name.split("/")
     if any(segment in ("", ".", "..") for segment in segments):
         raise Rejected(f"{WORKFLOW_URL}: repository archive has an unsafe path", 422)
@@ -164,10 +235,11 @@ def read_archive(
     Raises:
         Rejected: The decompressed archive is larger than
             `max_archive_size`, or the files exceed the limits (`413`); an
-            entry has an unsafe path, the archive has no single top
+            entry has an unsafe or too long path, the archive has no single top
             directory, the files to read have a link, a special entry or
             names that conflict (`422`).
-        GitError: The archive is no valid `tar.gz` file.
+        GitError: The archive is no valid `tar.gz` file, e.g., with an
+            invalid header, or no end of archive (zero blocks).
     """
     decompressed = gzip.GzipFile(fileobj=io.BytesIO(content), mode="rb")
     stream = _BoundedReader(
@@ -215,7 +287,18 @@ def read_archive(
                 reader = tar.extractfile(entry)
                 data = reader.read() if reader is not None else b""
                 files.append(Attachment(filename, data, MEDIA_TYPE))
-    except (tarfile.TarError, OSError, EOFError, zlib.error) as exc:
+            # `tarfile` ends streams at the first invalid header after the
+            # first entry, as at the end of the archive
+            if not stream.is_end(tar.offset):
+                raise GitError("Repository archive is invalid: no end of archive")
+    except (
+        tarfile.TarError,
+        OSError,
+        EOFError,
+        zlib.error,
+        ValueError,
+        OverflowError,
+    ) as exc:
         raise GitError(f"Repository archive is invalid: {type(exc).__name__}") from None
     check_names(
         files, 422, f"{WORKFLOW_URL}: repository has files with conflicting names"

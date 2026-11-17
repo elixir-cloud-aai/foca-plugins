@@ -496,6 +496,108 @@ def test_read_fails_on_truncated_files() -> None:
         read(gzip.compress(tar[:2048]))
 
 
+def corrupt_header(tar: bytes, index: int) -> bytes:
+    """Make the checksum of a header of a `tar` stream invalid.
+
+    Args:
+        tar: Uncompressed `tar` stream of entries without data, or with data
+            of less than one block.
+        index: Index of the header block (each header followed by one data
+            block, or none).
+
+    Returns:
+        Changed stream.
+    """
+    start = index * tarfile.BLOCKSIZE
+    return tar[: start + 148] + b"9999999\0" + tar[start + 156 :]
+
+
+@pytest.mark.parametrize(
+    ("tar", "message"),
+    [
+        # a corrupt header after the first entries, which `tarfile` takes as
+        # the end of the archive
+        (
+            corrupt_header(
+                gzip.decompress(
+                    make_archive(
+                        [Entry("a", b"x"), Entry("b", b"y")], fmt=tarfile.USTAR_FORMAT
+                    )
+                ),
+                3,
+            ),
+            "no end of archive",
+        ),
+        # no zero blocks at the end
+        (
+            gzip.decompress(make_archive([Entry("a", b"x")], fmt=tarfile.USTAR_FORMAT))[
+                : 3 * tarfile.BLOCKSIZE
+            ],
+            "no end of archive",
+        ),
+        # data after the zero blocks
+        (
+            gzip.decompress(make_archive([Entry("a", b"x")])) + b"garbage",
+            "no end of archive",
+        ),
+        # malformed GNU sparse map (`tarfile` raises `ValueError`)
+        (
+            gzip.decompress(
+                make_archive([Entry("a", b"x", pax_headers={"GNU.sparse.map": "a,b"})])
+            ),
+            "ValueError",
+        ),
+    ],
+)
+def test_read_fails_on_invalid_tar_streams(tar: bytes, message: str) -> None:
+    """Invalid headers, missing or wrong ends of archives fail.
+
+    Args:
+        tar: Uncompressed `tar` stream.
+        message: Part of the message.
+    """
+    with pytest.raises(GitError, match=message):
+        read(gzip.compress(tar), "elsewhere/")
+
+
+def test_read_refuses_long_paths() -> None:
+    """Entries with names longer than Git allows are refused (`422`)."""
+    content = make_archive([Entry("a/" * 2048 + "x", b"x")])
+    with pytest.raises(Rejected, match="too long path") as info:
+        read(content, "elsewhere/")
+    assert info.value.status == 422
+
+
+def test_end_check_needs_kept_bytes() -> None:
+    """Ends of archives before the kept bytes can't be checked."""
+    stream = archive._BoundedReader(
+        io.BytesIO(bytes(200_000)).read, 10**6, Rejected("x")
+    )
+    stream.read(200_000)
+    assert not stream.is_end(0)
+    assert stream.is_end(200_000 - tarfile.BLOCKSIZE)
+
+
+@pytest.mark.parametrize(
+    ("rest", "expected"),
+    [
+        (bytes(200_000), True),
+        (bytes(200_000) + b"x", False),
+        (b"", False),
+    ],
+)
+def test_end_check_reads_rest_of_stream(rest: bytes, expected: bool) -> None:
+    """The rest of the stream, beyond the bytes read, must be zero blocks.
+
+    Args:
+        rest: Bytes not read yet.
+        expected: Whether the stream ends there.
+    """
+    stream = archive._BoundedReader(io.BytesIO(b"x" + rest).read, 10**6, Rejected("x"))
+    stream.read(1)
+    assert stream.is_end(1) is expected
+
+
 # Download
 
 
@@ -523,6 +625,55 @@ def test_download_archive_rejects_large_archives() -> None:
     with pytest.raises(Rejected, match="larger than the gateway allows") as info:
         download_archive(http, REPO)
     assert info.value.status == 413
+
+
+GITLAB_REPO = RepoFile(
+    "gitlab.com",
+    "gitlab",
+    "main",
+    "main.cwl",
+    "https://gitlab.com/g/p/-/archive/main/archive.tar.gz",
+)
+
+
+@pytest.mark.parametrize(
+    "location", ["https://gitlab.com/users/sign_in", "/users/sign_in/"]
+)
+def test_download_archive_rejects_missing_gitlab_projects(location: str) -> None:
+    """GitLab's redirects to its sign-in page mean missing projects (`422`).
+
+    Args:
+        location: Target of the redirect.
+    """
+    http = FakeHttp()
+    http.add("GET", GITLAB_REPO.archive_url, status=302, headers={"Location": location})
+    with pytest.raises(Rejected, match="no such public repository or ref") as info:
+        download_archive(http, GITLAB_REPO)
+    assert info.value.status == 422
+
+
+@pytest.mark.parametrize(
+    ("repo", "headers"),
+    [
+        (GITLAB_REPO, {"Location": "https://gitlab.com/g/q/-/archive/main/a.tar.gz"}),
+        (GITLAB_REPO, {"Location": "https://[::1/users/sign_in"}),
+        (GITLAB_REPO, {}),
+        (REPO, {"Location": "https://github.com/users/sign_in"}),
+    ],
+)
+def test_download_archive_fails_on_other_redirects(
+    repo: RepoFile, headers: dict[str, str]
+) -> None:
+    """Other redirects fail, as they are not followed.
+
+    Args:
+        repo: File of the repository.
+        headers: Headers of the redirect.
+    """
+    http = FakeHttp()
+    http.add("GET", repo.archive_url, status=302, headers=headers)
+    with pytest.raises(GitError, match="answered 302"):
+        download_archive(http, repo)
 
 
 @pytest.mark.parametrize("status", [302, 403, 500, 503])
