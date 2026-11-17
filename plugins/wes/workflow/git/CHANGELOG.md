@@ -12,4 +12,4 @@ docs).
 ### Features
 
 - Add the plugin `wes.workflow.git`: run WES workflows from public Git
-  repositories of GitHub, GitLab and Bitbucket (#88).
+  repositories of GitHub, GitLab and Bitbucket (#88, #91).
