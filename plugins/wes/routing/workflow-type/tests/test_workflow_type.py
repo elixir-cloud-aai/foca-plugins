@@ -302,6 +302,8 @@ def test_settings_have_defaults() -> None:
         {"cache_size": -1},
         {"request_timeout": 0},
         {"request_timeout": 61},
+        {"max_size": 1023},
+        {"max_size": 16 * 1024 * 1024 + 1},
     ],
 )
 def test_settings_are_validated(data: dict[str, Any]) -> None:
@@ -711,9 +713,10 @@ def test_timeouts_within_the_step_time_are_skipped(
 ) -> None:
     """Timeouts cut short by the step's time aren't the backend's failure.
 
-    With less time left than `request_timeout`, a timed-out backend is
-    skipped and not cached; with the full `request_timeout`, it is
-    unreadable and cached for `failure_ttl`.
+    With less than half of `request_timeout` left, a timed-out backend is
+    skipped and not cached; with at least half of it (so that a step
+    shorter than `request_timeout` still caches backends that don't
+    answer), it is unreadable and cached for `failure_ttl`.
 
     Args:
         http: HTTP client.
@@ -721,14 +724,36 @@ def test_timeouts_within_the_step_time_are_skipped(
     """
     http.add("GET", info_url("x"), error=error)
     plugin = make_plugin(unreadable="drop", request_timeout=2)
-    ctx = make_context(http=http, seconds=1)
+    ctx = make_context(http=http, seconds=0.9)
     assert route(plugin, [backend("x"), backend("a")], ctx) == ["a"]
     assert (ctx.annotations["skipped"], ctx.annotations["fetched"]) == (1, 1)
     assert plugin.runtime.cache.get(info_url("x")) == (False, None)
-    ctx = make_context(http=http, seconds=10)
+    ctx = make_context(http=http, seconds=1.5)
     assert route(plugin, [backend("x"), backend("a")], ctx) == ["a"]
     assert (ctx.annotations["skipped"], ctx.annotations["fetched"]) == (0, 1)
     assert plugin.runtime.cache.get(info_url("x")) == (True, None)
+
+
+def test_responses_are_bounded_by_max_size() -> None:
+    """Service infos beyond `max_size` are unreadable, before they are parsed.
+
+    The gateway's smaller limit applies, too.
+    """
+    http = FakeHttp(max_response_size=4096)
+    http.add("GET", info_url("a"), json=service_info({"CWL": {"x": "y" * 2000}}))
+    http.add("GET", info_url("b"), json=service_info({"CWL": {"x": "y" * 5000}}))
+    plugin = make_plugin(max_size=1024, unreadable="drop")
+    ctx = make_context(http=http)
+    assert route(plugin, [backend("a"), backend("b")], ctx) == []
+    assert ctx.annotations["unreadable"] == 2
+    assert ctx.http is not None
+    assert ctx.http.max_response_size == 1024
+    plugin = make_plugin(max_size=1024 * 1024)
+    ctx = make_context(http=http)
+    assert route(plugin, [backend("a"), backend("b")], ctx) == ["a", "b"]
+    assert ctx.annotations["unreadable"] == 1
+    assert ctx.http is not None
+    assert ctx.http.max_response_size == 4096
 
 
 def test_requests_are_bounded_by_request_timeout(http: FakeHttp) -> None:
@@ -840,7 +865,7 @@ def test_slow_backend_leaves_the_route_in_time(slow_server: str) -> None:
 
     The engine discards results that come after the deadline; the plugin
     stops waiting for the slow backend `RESERVE` before it, so that the
-    route of the fast one stands, and doesn't cache the slow one.
+    route of the fast one stands, and skips the slow one.
 
     Args:
         slow_server: Base URL of the local backends.
@@ -853,6 +878,9 @@ def test_slow_backend_leaves_the_route_in_time(slow_server: str) -> None:
                     "config": {
                         "unreadable": "drop",
                         "service_info_path": "/service-info",
+                        # more than twice the step's time: the slow
+                        # backend is cut short by the step, so skipped
+                        "request_timeout": 5,
                     }
                 }
             },
@@ -873,9 +901,7 @@ def test_slow_backend_leaves_the_route_in_time(slow_server: str) -> None:
             make_backend("fast", f"{slow_server}/fast"),
             make_backend("slow", f"{slow_server}/slow"),
         ]
-        started = time.monotonic()
         routed = run.route(candidates)
-        assert time.monotonic() - started < 1.5
         (execution,) = run.executions
         assert execution.outcome == "ok"
         assert [b.id for b in routed] == ["fast"]

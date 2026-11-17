@@ -2,7 +2,7 @@
 
 WES backends support some workflow types (e.g., CWL 1.2, Nextflow DSL2) and,
 from WES 1.1 on, some workflow engines, which they list in their service
-info (`GET /service-info`: `workflow_type_versions`,
+info (by default `GET /ga4gh/wes/v1/service-info`: `workflow_type_versions`,
 `workflow_engine_versions`). In the `route` phase, this plugin keeps the
 candidate backends that support the run's `workflow_type` and
 `workflow_type_version`, and its `workflow_engine` and
@@ -37,7 +37,7 @@ from foca_plugins.wes.routing.workflow_type.service_info import (
     run_needs,
 )
 
-__all__ = ["WorkflowType", "WorkflowTypeConfig"]
+__all__ = ["RESERVE", "WorkflowType", "WorkflowTypeConfig"]
 
 # Absolute URL paths (RFC 3986: segments of unreserved and sub-delimiter
 # characters, `:`, `@` and percent-encodings), without query or fragment
@@ -70,6 +70,9 @@ class WorkflowTypeConfig(BaseModel):
         request_timeout: Seconds per service info request, so that one slow
             backend leaves time for the others; within the step's time (less
             `RESERVE`).
+        max_size: Maximum size of a service info, in bytes (and at most the
+            gateway's `plugins.defaults.http.max_response_size`), so that
+            parsing it can't take up the step's time.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -82,6 +85,7 @@ class WorkflowTypeConfig(BaseModel):
     failure_ttl: int = Field(default=30, ge=0, le=86400)
     cache_size: int = Field(default=1000, ge=0, le=100_000)
     request_timeout: float = Field(default=2.0, gt=0, le=60)
+    max_size: int = Field(default=256 * 1024, ge=1024, le=16 * 1024 * 1024)
 
     @field_validator("service_info_path")
     @classmethod
@@ -120,12 +124,14 @@ class _Counts:
     """Counts of a call, for the annotations.
 
     Attributes:
-        fetched: Service infos requested.
+        fetched: Service infos requested and answered, or failed (not
+            skipped).
         cache_hits: Backends found in the cache.
         unreadable: Backends whose service info couldn't be read, also the
             skipped ones.
         skipped: Backends whose service info wasn't requested, or timed
-            out, as the step's time was (nearly) up.
+            out with less than half of `request_timeout`, as the step's
+            time was (nearly) up.
     """
 
     fetched: int = 0
@@ -252,13 +258,16 @@ def _support(
     elif (budget := ctx.remaining() - RESERVE) <= 0:
         counts.skipped += 1
     else:
-        # the client is the call's own, so its timeout can be set per request
+        # the client is the call's own, so its limits can be set per request:
+        # small bodies, so that parsing them takes no noticeable time
         http.timeout = min(settings.request_timeout, budget)
+        http.max_response_size = min(http.max_response_size, settings.max_size)
         try:
             support = fetch_support(http, url)
         except HttpError as exc:
-            if exc.reason in _TIMEOUTS and budget < settings.request_timeout:
-                # out of the step's time, not of the backend's: not cached
+            if exc.reason in _TIMEOUTS and budget < settings.request_timeout / 2:
+                # out of the step's time rather than the backend's, with less
+                # than half of its time: not cached, so the next run retries
                 counts.skipped += 1
             else:
                 _failed(backend, url, exc, runtime, ctx, counts)

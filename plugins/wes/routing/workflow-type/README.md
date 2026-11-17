@@ -62,7 +62,8 @@ the backend's error.
    infos without `workflow_type_versions`, or with
    `workflow_type_versions` or `workflow_engine_versions` that are no
    objects, and service infos with more than 256 workflow types or
-   engines, or more than 1024 versions of them in all (so that no backend
+   engines, or more than 1024 versions of the types, or of the engines,
+   each in all (so that no backend
    makes the cache large); names and versions longer than 256 characters
    are left out. Backends skipped for lack of the step's time (see
    [Requests](#requests)) count as unreadable, too.
@@ -83,7 +84,7 @@ that no backend is available (`503`).
 
 Annotations, counts only: `candidates`, `kept`, `unsupported` (read, but
 not supporting the run), `unreadable` (also those skipped), `skipped`
-(not requested, or timed out, for lack of the step's time), `fetched`
+(not requested, or timed out with less than half of `request_timeout`, for lack of the step's time), `fetched`
 (service infos requested and answered, or failed) and `cache_hits`. The kept candidates are in the
 provenance of each request (`route.candidates_out`).
 
@@ -121,11 +122,18 @@ Uncached backends are requested one after the other, each for at most
 `plugins.defaults.timeout`, 10 seconds, unless the step sets one). The
 engine discards a hook's result that comes after the step's deadline, so
 the plugin keeps the last 0.25 seconds (`RESERVE`) for returning: no
-request runs into them. Backends left then, and requests cut short by
-the step's time rather than by `request_timeout`, are skipped: they count
-as unreadable for this run, but aren't cached, so that the next run
-requests them. Set the step's `timeout` to fit `request_timeout` for each
-backend that may be uncached at once, plus `RESERVE`.
+request runs into them. Backends left then, and requests that time out
+with less than half of `request_timeout` (as the step's time was nearly
+up), are skipped: they count as unreadable for this run, but aren't
+cached, so that the next run requests them. Requests that time out with
+more time are unreadable and cached for `failure_ttl`. Set the step's
+`timeout` to fit `request_timeout` for each backend that may be uncached
+at once, plus `RESERVE`.
+
+Service infos larger than `max_size` (256 KiB; at most the gateway's
+`plugins.defaults.http.max_response_size`) are refused before they are
+parsed, so that parsing them takes no noticeable time: the backend is
+unreadable.
 
 ## Configuration
 
@@ -155,6 +163,7 @@ plugins:
 | `failure_ttl` | integer | `30` | Seconds to keep a backend whose service info couldn't be read as unreadable (0 to 86400). |
 | `cache_size` | integer | `1000` | Maximum number of backends in the cache of each process (0 to 100000); 0 turns the cache off. |
 | `request_timeout` | number | `2.0` | Seconds per service info request (more than 0, at most 60), so that one slow backend leaves time for the others; a backend that takes longer is unreadable (and cached as such for `failure_ttl`). |
+| `max_size` | integer | `262144` | Maximum size of a service info, in bytes (1024 to 16777216), and at most the gateway's `plugins.defaults.http.max_response_size`; larger ones are unreadable. |
 
 The plugin has no parameters (`params`).
 
