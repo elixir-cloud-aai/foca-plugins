@@ -20,11 +20,20 @@ repository root as `python -m scripts.packages <command>`:
   mypy for the given packages (directories), or for all packages, the
   scripts, their tests and the docs hooks, with the plugins' `src/`
   directories on the search path.
+- `foca PATH OLDEST [--dev]` (`ci.yml`, job `test`): whether a plugin
+  supports the installed FOCA version, and the oldest FOCA version that CI
+  tests, by the `foca` requirement of its dependencies, as GitHub Actions
+  step outputs (`supported=true|false`, `oldest=true|false`), so that CI
+  skips the FOCA releases that a plugin doesn't support (e.g., a plugin
+  that needs FOCA's `dev` branch until FOCA releases a feature). With
+  `--dev` (FOCA's `dev` branch installed), every plugin is supported, so
+  that each plugin runs at least one entry and changes of FOCA show.
 """
 
 import argparse
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
+from importlib.metadata import version
 import json
 import os
 from pathlib import Path
@@ -294,6 +303,35 @@ def mypy(paths: Sequence[str], root: Path = ROOT) -> int:
     ).returncode
 
 
+def supports_foca(path: str, versions: Sequence[str], root: Path = ROOT) -> list[bool]:
+    """Check whether a package supports FOCA versions.
+
+    Args:
+        path: Directory of the package, relative to the repository root.
+        versions: FOCA versions, e.g., `0.19.0` or `0.22.1.dev11+gabc`.
+        root: Repository root.
+
+    Returns:
+        For each version, whether the `foca` requirement of the package's
+        dependencies allows it (pre-releases included); `True` if it has no
+        such requirement.
+    """
+    # `packaging` is no dependency of the job `changes`, which uses the
+    # standard library only, but one of FOCA (and of the dev tools)
+    from packaging.requirements import Requirement  # noqa: PLC0415
+    from packaging.utils import canonicalize_name  # noqa: PLC0415
+
+    project = load_pyproject(root / path / "pyproject.toml")["project"]
+    requirements = [Requirement(item) for item in project.get("dependencies", [])]
+    specifiers = [
+        r.specifier for r in requirements if canonicalize_name(r.name) == "foca"
+    ]
+    return [
+        all(spec.contains(item, prereleases=True) for spec in specifiers)
+        for item in versions
+    ]
+
+
 def matrix(packages: Iterable[Package]) -> str:
     """Format packages as the JSON of a CI matrix.
 
@@ -323,9 +361,20 @@ def main(argv: Sequence[str] | None = None, root: Path = ROOT) -> int:
     changed.add_argument("head", help="head commit")
     types = commands.add_parser("mypy", help="run mypy")
     types.add_argument("paths", nargs="*", help="package directories")
+    foca = commands.add_parser("foca", help="check FOCA support (step outputs)")
+    foca.add_argument("path", help="package directory")
+    foca.add_argument("oldest", help="oldest FOCA version that CI tests")
+    foca.add_argument("--dev", action="store_true", help="FOCA's dev branch")
     args = parser.parse_args(argv)
     if args.command == "mypy":
         return mypy(args.paths, root)
+    if args.command == "foca":
+        installed, oldest = supports_foca(
+            args.path, [version("foca"), args.oldest], root
+        )
+        print(f"supported={str(installed or args.dev).lower()}")
+        print(f"oldest={str(oldest).lower()}")
+        return 0
     packages = discover(root)
     files = changed_files(args.base, args.head, root)
     selected = plugins(packages) if files is None else affected(files, packages)

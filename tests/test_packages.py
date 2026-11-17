@@ -190,3 +190,61 @@ def test_main_mypy(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(packages, "mypy", mypy)
     assert packages.main(["mypy", "a", "b"], repo) == 7
     assert calls == [(["a", "b"], repo)]
+
+
+def set_dependencies(repo: Path, dependencies: str) -> None:
+    """Replace the dependencies of the example plugin.
+
+    Args:
+        repo: Repository root.
+        dependencies: TOML array of the dependencies.
+    """
+    path = repo / NOOP.path / "pyproject.toml"
+    head, _, tail = path.read_text().partition("dependencies = [")
+    _, _, rest = tail.partition("]\n")
+    path.write_text(f"{head}dependencies = {dependencies}\n{rest}")
+
+
+@pytest.mark.parametrize(
+    ("dependencies", "expected"),
+    [
+        ('["foca>=0.19.0,<0.23"]', [True, True, True, False]),
+        ('["FOCA>=0.22.1.dev0,<0.24", "pydantic"]', [False, False, True, True]),
+        ('["foca>=0.19.0", "foca<0.22"]', [True, False, False, False]),
+        ('["pydantic>=2"]', [True, True, True, True]),
+        ("[]", [True, True, True, True]),
+    ],
+)
+def test_supports_foca(repo: Path, dependencies: str, expected: list[bool]) -> None:
+    """FOCA versions, pre-releases too, are checked against the requirement.
+
+    Args:
+        repo: Repository root.
+        dependencies: Dependencies of the plugin.
+        expected: Support of the versions.
+    """
+    set_dependencies(repo, dependencies)
+    versions = ["0.19.0", "0.22.0", "0.22.1.dev11+g7bc6d9c8f", "0.23.0"]
+    assert packages.supports_foca(NOOP.path, versions, repo) == expected
+
+
+def test_main_foca(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The `foca` command prints step outputs for the installed FOCA.
+
+    Args:
+        repo: Repository root.
+        monkeypatch: Patches.
+        capsys: Captured output.
+    """
+    set_dependencies(repo, '["foca>=0.22.1.dev0,<0.24"]')
+    monkeypatch.setattr(packages, "version", lambda _: "0.22.1.dev3+gabc")
+    assert packages.main(["foca", NOOP.path, "0.19.0"], repo) == 0
+    assert capsys.readouterr().out == "supported=true\noldest=false\n"
+    monkeypatch.setattr(packages, "version", lambda _: "0.22.0")
+    assert packages.main(["foca", NOOP.path, "0.22.1"], repo) == 0
+    assert capsys.readouterr().out == "supported=false\noldest=true\n"
+    monkeypatch.setattr(packages, "version", lambda _: "0.24.1.dev2")
+    assert packages.main(["foca", NOOP.path, "0.19.0", "--dev"], repo) == 0
+    assert capsys.readouterr().out == "supported=true\noldest=false\n"

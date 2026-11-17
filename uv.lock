@@ -12,6 +12,7 @@ members = [
     "foca-plugin-generic-routing-random",
     "foca-plugin-tes-data-crypt4gh",
     "foca-plugin-tes-routing-distance",
+    "foca-plugin-wes-workflow-trs",
     "foca-plugins",
 ]
 build-constraints = [{ name = "setuptools", specifier = "==84.2.1" }]
@@ -1250,8 +1251,8 @@ wheels = [
 
 [[package]]
 name = "foca"
-version = "0.22.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.22.1.dev11+g7bc6d9c8f"
+source = { git = "https://github.com/elixir-cloud-aai/foca?branch=dev#7bc6d9c8fd69307f41020b3c75713fc21ceac3c7" }
 dependencies = [
     { name = "addict" },
     { name = "celery" },
@@ -1273,10 +1274,6 @@ dependencies = [
     { name = "urllib3" },
     { name = "werkzeug" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/71/f9/7a6d79ffb5ded48aefb3969b71bb6782b9a5681cc93d6abb879899a7e007/foca-0.22.0.tar.gz", hash = "sha256:20caeaf43327b3525f135a3fda2b8fb6146b2a2264156fb043e2130f35e2c271", size = 718720, upload-time = "2026-11-09T07:55:23.689Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/ed/4bd06a6674ca193f4838136df067891e29613210e65a645ac10ab3e25965/foca-0.22.0-py3-none-any.whl", hash = "sha256:5e38071c451f0a70b33802094f333b11bde2010cfe55cf7563e741bdc1a5411e", size = 376230, upload-time = "2026-11-09T07:55:22.024Z" },
-]
 
 [[package]]
 name = "foca-plugin-generic-example-noop"
@@ -1289,7 +1286,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.19.0,<0.23" },
+    { name = "foca", git = "https://github.com/elixir-cloud-aai/foca?branch=dev" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 
@@ -1304,7 +1301,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.19.0,<0.23" },
+    { name = "foca", git = "https://github.com/elixir-cloud-aai/foca?branch=dev" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 
@@ -1319,7 +1316,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.19.0,<0.23" },
+    { name = "foca", git = "https://github.com/elixir-cloud-aai/foca?branch=dev" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 
@@ -1335,8 +1332,23 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.19.0,<0.23" },
+    { name = "foca", git = "https://github.com/elixir-cloud-aai/foca?branch=dev" },
     { name = "maxminddb", specifier = ">=2.6,<4" },
+    { name = "pydantic", specifier = ">=2.7,<3" },
+]
+
+[[package]]
+name = "foca-plugin-wes-workflow-trs"
+version = "0.1.0"
+source = { editable = "plugins/wes/workflow/trs" }
+dependencies = [
+    { name = "foca" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "foca", git = "https://github.com/elixir-cloud-aai/foca?branch=dev" },
     { name = "pydantic", specifier = ">=2.7,<3" },
 ]
 
@@ -1373,7 +1385,7 @@ tes-routing = [
 
 [package.metadata]
 requires-dist = [
-    { name = "foca", specifier = ">=0.19.0,<0.23" },
+    { name = "foca", git = "https://github.com/elixir-cloud-aai/foca?branch=dev" },
     { name = "foca-plugin-generic-routing-random", marker = "extra == 'experimental'", editable = "plugins/generic/routing/random" },
     { name = "foca-plugin-generic-routing-random", marker = "extra == 'generic'", editable = "plugins/generic/routing/random" },
     { name = "foca-plugin-generic-routing-random", marker = "extra == 'generic-routing'", editable = "plugins/generic/routing/random" },

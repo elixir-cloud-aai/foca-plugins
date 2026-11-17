@@ -21,6 +21,7 @@ of its own (`foca-plugin-<group>-<subgroup>-<name>`) with the plugin ID
 | `policy` | reject requests that a policy doesn't allow | `request` |
 | `data` | change the data of requests, e.g., add executors or inputs | `request`, `forward` |
 | `identity` | pass on or record the caller's identity, e.g., as tags | `request`, `forward` |
+| `workflow` | fetch workflows from elsewhere (e.g., a TRS) and attach them to WES runs | `request` |
 | `example` | show the conventions; never published | any |
 
 Add a subgroup with its first plugin; reuse an existing one where it fits.
