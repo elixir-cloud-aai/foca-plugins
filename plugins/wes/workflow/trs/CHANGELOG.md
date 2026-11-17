@@ -12,4 +12,4 @@ docs).
 ### Features
 
 - Add the plugin `wes.workflow.trs`: run WES workflows from a GA4GH TRS
-  (#87).
+  (#87, #89).
