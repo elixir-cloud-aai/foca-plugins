@@ -293,7 +293,11 @@ def test_fetch_missing_descriptor(http: FakeHttp) -> None:
         ),
         (
             [TrsFile("main.cwl", "PRIMARY_DESCRIPTOR"), TrsFile("MAIN.cwl")],
-            "lists a descriptor twice",
+            "lists conflicting descriptors",
+        ),
+        (
+            [TrsFile("tools", "PRIMARY_DESCRIPTOR"), TrsFile("tools/a.cwl")],
+            "lists conflicting descriptors",
         ),
     ],
 )
@@ -506,6 +510,7 @@ def test_settings_normalize_hosts() -> None:
         (TrsConfig, {"allowed_hosts": ["user@trs.example.org"]}),
         (TrsConfig, {"allowed_hosts": ["trs.example.org:99999"]}),
         (TrsConfig, {"allowed_hosts": [""]}),
+        (TrsConfig, {"allowed_hosts": ["[::1]"]}),
         (TrsConfig, {"allowed_hosts": [1]}),
         (TrsConfig, {"max_files": 0}),
         (TrsConfig, {"max_size": 0}),
@@ -683,7 +688,7 @@ def test_on_request_rejects_directory_conflicts(
     """
     serve(http, [*fetched, TrsFile("tools/step.cwl")])
     request = make_run(attachments=[Attachment(attached, b"x")])
-    with pytest.raises(Rejected, match="conflict with others") as info:
+    with pytest.raises(Rejected, match="conflicts with another") as info:
         plugin.on_request(request, make_context(http))
     assert info.value.status == 409
     assert request.payload["workflow_url"] == TRS_URI

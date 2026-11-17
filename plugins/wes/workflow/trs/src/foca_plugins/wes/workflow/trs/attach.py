@@ -15,7 +15,6 @@ fields, never values.
 
 from collections.abc import Collection, Iterable, MutableMapping
 from typing import Annotated, Any
-import unicodedata
 from urllib.parse import SplitResult, urlsplit
 
 from foca.plugins import Attachment, Rejected
@@ -31,6 +30,7 @@ from pydantic import AfterValidator, BeforeValidator, StringConstraints
 WORKFLOW_URL = "workflow_url"
 """Field of run requests with the workflow's URL or main file."""
 
+# Limits that never apply: the gateway checks its own after the hook
 _NO_LIMITS = AttachmentsConfig(max_count=2**31, max_size=2**62)
 
 
@@ -98,8 +98,6 @@ Host = Annotated[
     StringConstraints(pattern=rf"^{_HOST}$", max_length=259),
     AfterValidator(_normalize),
 ]
-
-
 """Allowed host of settings: a host name, optionally with a port, as
 :py:func:`host_key` returns it (lowercase, without the port 443)."""
 
@@ -138,18 +136,6 @@ def relative_path(path: str) -> str:
         return check_filename(path.lstrip("/"))
     except InvalidRunRequest as exc:
         raise Rejected(f"{ATTACHMENT_FIELD}: fetched file: {exc}", 422) from None
-
-
-def file_key(filename: str) -> str:
-    """Get the key that tells filenames apart, as FOCA compares them.
-
-    Args:
-        filename: Filename.
-
-    Returns:
-        The NFKC normalization of the filename, ignoring case.
-    """
-    return unicodedata.normalize("NFKC", filename).casefold()
 
 
 class FileLimits:
@@ -228,26 +214,35 @@ def attach_workflow(
         main_file: Filename of the main file, one of `files`.
 
     Raises:
-        Rejected: A file has the name of another (also after NFKC
-            normalization and ignoring case), e.g., of one that the client
-            attached, or is a directory of another, or in another, as FOCA
-            checks them (cf. `foca.plugins.wes.check_attachments`) (`409`).
+        Rejected: A fetched file conflicts with another (cf.
+            :py:func:`check_names`), e.g., with one that the client attached
+            (`409`).
     """
-    attachments = list(run.get(ATTACHMENT_FIELD) or [])
-    names = {file_key(attachment.filename) for attachment in attachments}
-    for file in files:
-        key = file_key(file.filename)
-        if key in names:
-            raise Rejected(
-                f"{ATTACHMENT_FIELD}: a fetched file has the name of another file",
-                409,
-            )
-        names.add(key)
-        attachments.append(file)
-    try:
-        # names only: the gateway checks its limits after the hook
-        check_attachments(attachments, _NO_LIMITS)
-    except InvalidRunRequest as exc:
-        raise Rejected(f"fetched files conflict with others: {exc}", 409) from None
+    attachments = [*(run.get(ATTACHMENT_FIELD) or []), *files]
+    check_names(
+        attachments, 409, f"{ATTACHMENT_FIELD}: a fetched file conflicts with another"
+    )
     run[ATTACHMENT_FIELD] = attachments
     run[WORKFLOW_URL] = main_file
+
+
+def check_names(files: list[Attachment], status: int, detail: str) -> None:
+    """Check that files don't conflict by name, as FOCA checks them.
+
+    Files conflict if they have the same name (also after NFKC
+    normalization and ignoring case), or if one is a directory of another,
+    or inside another (cf. :py:func:`foca.plugins.wes.check_attachments`;
+    its limits don't apply here).
+
+    Args:
+        files: Files.
+        status: HTTP status of the rejection.
+        detail: Message of the rejection.
+
+    Raises:
+        Rejected: Files conflict.
+    """
+    try:
+        check_attachments(files, _NO_LIMITS)
+    except InvalidRunRequest:
+        raise Rejected(detail, status) from None

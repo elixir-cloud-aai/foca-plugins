@@ -69,13 +69,14 @@ an attached workflow or another `https` URL. It rejects the run:
 | --- | --- |
 | `400` | The `trs://` URI or TRS URL is malformed (e.g., user info, a query or fragment, a tool or version identifier `.` or `..`), or `workflow_type` has no TRS descriptor type. |
 | `403` | The TRS host isn't in `allowed_hosts` (by default, every host). |
-| `409` | A fetched file has the name of a file that the client attached (also after NFKC normalization and ignoring case), or is a directory of another file, or inside one (e.g., the client attached `tools` and the TRS lists `tools/step.cwl`). |
+| `409` | A fetched file has the name of a file that the client attached (also after NFKC normalization and ignoring case), or is a directory of it, or inside it (e.g., the client attached `tools` and the TRS lists `tools/step.cwl`). |
 | `413` | The tool version has more than `max_files` descriptors, or they are larger than `max_size` in total (responses that can't fit are refused before they are parsed). |
-| `422` | The TRS has no such tool version with that descriptor type, or lacks a listed descriptor (`404`); there is no single primary descriptor; a path is unsafe (e.g., with `..`) or listed twice; a descriptor has no inline `content` (the plugin doesn't follow `url`s) or no valid text; the file listing is larger than 1 MiB, or a response larger than the gateway's `plugins.defaults.http.max_response_size`. |
+| `422` | The TRS has no such tool version with that descriptor type, or lacks a listed descriptor (`404`); there is no single primary descriptor; a path is unsafe (e.g., with `..`), listed twice, or a directory of another; a descriptor has no inline `content` (the plugin doesn't follow `url`s) or no valid text; the file listing is larger than 1 MiB, or a response larger than the gateway's `plugins.defaults.http.max_response_size`. |
 
 Responses are checked for size before they are parsed, so that a TRS
-can't make the gateway parse more than about 1 MiB of listing or
-`max_size` of descriptors (as JSON). Other responses of the TRS (e.g.,
+can't make the gateway parse more than about 1 MiB of listing, or
+about six times what is left of `max_size` (JSON escapes) plus 64 KiB
+per descriptor. Other responses of the TRS (e.g.,
 `5xx`, `401`, redirects, invalid JSON)
 fail the call (`TrsError`), as do errors of the HTTP client (e.g., refused
 addresses, timeouts): the step's `on_failure` applies.

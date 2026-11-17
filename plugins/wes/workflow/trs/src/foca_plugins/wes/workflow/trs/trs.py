@@ -17,7 +17,7 @@ from foca.utils.http import GuardedClient, ResponseTooLarge
 from foca_plugins.wes.workflow.trs.attach import (
     WORKFLOW_URL,
     FileLimits,
-    file_key,
+    check_names,
     host_key,
     relative_path,
 )
@@ -41,8 +41,6 @@ SECONDARY = "SECONDARY_DESCRIPTOR"
 
 MEDIA_TYPE = "text/plain"
 """Media type of the attached descriptor files."""
-
-FIELD = WORKFLOW_URL
 
 MAX_LISTING_SIZE = 1024 * 1024
 """Maximum size of the file listings of tool versions, in bytes (parsed
@@ -234,9 +232,9 @@ def _get_json(
     try:
         response = http.get(url, headers={"Accept": "application/json"})
     except ResponseTooLarge:
-        raise Rejected(f"{FIELD}: a TRS response is too large", 422) from None
+        raise Rejected(f"{WORKFLOW_URL}: a TRS response is too large", 422) from None
     if response.status == 404:
-        raise Rejected(f"{FIELD}: {missing}", 422)
+        raise Rejected(f"{WORKFLOW_URL}: {missing}", 422)
     if response.status != 200:
         raise TrsError(f"TRS answered {response.status}")
     if len(response.content) > max_size:
@@ -276,7 +274,7 @@ def _descriptor_paths(listing: Any) -> list[str]:
             secondary.append(item["path"])
     if len(primary) != 1:
         raise Rejected(
-            f"{FIELD}: TRS tool version has no single primary descriptor", 422
+            f"{WORKFLOW_URL}: TRS tool version has no single primary descriptor", 422
         )
     return primary + secondary
 
@@ -307,8 +305,10 @@ def fetch_descriptors(
     Raises:
         Rejected: The TRS has no such tool version or descriptor type, or
             not one of its files, a file has no content or an unsafe path,
-            two have the same path, or a response is too large (`422`), or
-            the files exceed the limits (`413`).
+            two conflict by name (cf.
+            :py:func:`foca_plugins.wes.workflow.trs.attach.check_names`), or
+            a response is too large (`422`), or the files exceed the limits
+            (`413`).
         TrsError: The TRS answered unexpectedly.
         foca.utils.http.HttpError: A request failed.
     """
@@ -318,11 +318,14 @@ def fetch_descriptors(
         f"{base}/files",
         f"TRS has no such tool version with type {type_}",
         MAX_LISTING_SIZE,
-        Rejected(f"{FIELD}: TRS lists too many files", 422),
+        Rejected(f"{WORKFLOW_URL}: TRS lists too many files", 422),
     )
     paths = [relative_path(path) for path in _descriptor_paths(listing)]
-    if len({file_key(path) for path in paths}) != len(paths):
-        raise Rejected(f"{FIELD}: TRS lists a descriptor twice", 422)
+    check_names(
+        [Attachment(path, b"") for path in paths],
+        422,
+        f"{WORKFLOW_URL}: TRS lists conflicting descriptors",
+    )
     limits.check_count(len(paths))
     files: list[Attachment] = []
     for path in paths:
@@ -335,12 +338,14 @@ def fetch_descriptors(
         )
         content = wrapper.get("content") if isinstance(wrapper, dict) else None
         if not isinstance(content, str):
-            raise Rejected(f"{FIELD}: TRS gives a descriptor without content", 422)
+            raise Rejected(
+                f"{WORKFLOW_URL}: TRS gives a descriptor without content", 422
+            )
         try:
             data = content.encode("utf-8")
         except UnicodeEncodeError:
             raise Rejected(
-                f"{FIELD}: TRS gives a descriptor of invalid text", 422
+                f"{WORKFLOW_URL}: TRS gives a descriptor of invalid text", 422
             ) from None
         limits.add(len(data))
         files.append(Attachment(path, data, MEDIA_TYPE))

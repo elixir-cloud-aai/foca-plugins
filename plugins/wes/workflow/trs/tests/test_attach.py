@@ -11,7 +11,6 @@ from foca_plugins.wes.workflow.trs.attach import (
     FileLimits,
     attach_workflow,
     check_host,
-    file_key,
     host_key,
     relative_path,
 )
@@ -83,12 +82,6 @@ def test_relative_path_refuses_unsafe_paths(path: str) -> None:
     assert info.value.detail.startswith("workflow_attachment: fetched file: ")
 
 
-def test_file_key() -> None:
-    """Keys ignore case and NFKC differences."""
-    assert file_key("Main.CWL") == file_key("main.cwl")
-    assert file_key("\uff4d.cwl") == file_key("m.cwl")  # fullwidth m
-
-
 def test_file_limits() -> None:
     """Counts and sizes up to the limits pass; more is rejected with `413`."""
     limits = FileLimits(max_files=2, max_size=10)
@@ -133,12 +126,18 @@ def test_attach_workflow_adds_files_after_those_of_the_client() -> None:
 
 @pytest.mark.parametrize(
     ("attached", "fetched"),
-    [(["Main.cwl"], ["main.cwl"]), ([], ["main.cwl", "MAIN.cwl"])],
+    [
+        (["Main.cwl"], ["main.cwl"]),
+        (["\uff4dain.cwl"], ["main.cwl"]),  # fullwidth m
+        ([], ["main.cwl", "MAIN.cwl"]),
+        (["tools"], ["main.cwl", "tools/a.cwl"]),
+        (["main.cwl/x"], ["main.cwl"]),
+    ],
 )
 def test_attach_workflow_refuses_name_conflicts(
     attached: list[str], fetched: list[str]
 ) -> None:
-    """Fetched files can't share names with other files (`409`).
+    """Fetched files can't conflict with other files by name (`409`).
 
     Args:
         attached: Filenames of the client's files.
