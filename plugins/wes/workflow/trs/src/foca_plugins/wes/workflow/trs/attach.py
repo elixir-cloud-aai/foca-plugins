@@ -14,12 +14,24 @@ fields, never values.
 """
 
 from collections.abc import Collection, Iterable, MutableMapping
-from typing import Any
+from typing import Annotated, Any
 import unicodedata
-from urllib.parse import SplitResult
+from urllib.parse import SplitResult, urlsplit
 
 from foca.plugins import Attachment, Rejected
-from foca.plugins.wes import ATTACHMENT_FIELD, InvalidRunRequest, check_filename
+from foca.plugins.config import AttachmentsConfig
+from foca.plugins.wes import (
+    ATTACHMENT_FIELD,
+    InvalidRunRequest,
+    check_attachments,
+    check_filename,
+)
+from pydantic import AfterValidator, BeforeValidator, StringConstraints
+
+WORKFLOW_URL = "workflow_url"
+"""Field of run requests with the workflow's URL or main file."""
+
+_NO_LIMITS = AttachmentsConfig(max_count=2**31, max_size=2**62)
 
 
 def host_key(url: SplitResult) -> str:
@@ -43,6 +55,53 @@ def host_key(url: SplitResult) -> str:
         host = f"[{host}]"
     port = url.port
     return host if port in (None, 443) else f"{host}:{port}"
+
+
+# Host names (letters, digits, hyphens, dots) or IPv4 addresses, optionally
+# with a port; no IPv6 addresses
+_HOST = r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?"
+
+
+def _lowercase(value: Any) -> Any:
+    """Turn a host name into lowercase, as hosts of URLs are compared.
+
+    Args:
+        value: Host name, or another value (left to the validation).
+
+    Returns:
+        The value, in lowercase if it is a string.
+    """
+    return value.lower() if isinstance(value, str) else value
+
+
+def _normalize(value: str) -> str:
+    """Normalize an allowed host as hosts of URLs are (cf. `host_key()`).
+
+    Args:
+        value: Host name, optionally with a port.
+
+    Returns:
+        The host, without the port 443 of `https`.
+
+    Raises:
+        ValueError: The port is out of range.
+    """
+    try:
+        return host_key(urlsplit(f"https://{value}"))
+    except ValueError:
+        raise ValueError("invalid port") from None
+
+
+Host = Annotated[
+    str,
+    BeforeValidator(_lowercase),
+    StringConstraints(pattern=rf"^{_HOST}$", max_length=259),
+    AfterValidator(_normalize),
+]
+
+
+"""Allowed host of settings: a host name, optionally with a port, as
+:py:func:`host_key` returns it (lowercase, without the port 443)."""
 
 
 def check_host(host: str, allowed: Collection[str], field: str) -> None:
@@ -130,6 +189,17 @@ class FileLimits:
                 413,
             )
 
+    def too_large(self) -> Rejected:
+        """Describe files larger than allowed.
+
+        Returns:
+            Rejection (`413`).
+        """
+        return Rejected(
+            f"{ATTACHMENT_FIELD}: workflow files are larger than {self.max_size} bytes",
+            413,
+        )
+
     def add(self, size: int) -> None:
         """Count the size of a fetched file.
 
@@ -141,15 +211,11 @@ class FileLimits:
         """
         self.size += size
         if self.size > self.max_size:
-            raise Rejected(
-                f"{ATTACHMENT_FIELD}: workflow files are larger than"
-                f" {self.max_size} bytes",
-                413,
-            )
+            raise self.too_large()
 
 
 def attach_workflow(
-    run: MutableMapping[str, Any], files: Iterable[Attachment], workflow_url: str
+    run: MutableMapping[str, Any], files: Iterable[Attachment], main_file: str
 ) -> None:
     """Add fetched files to a run request and point it to its main file.
 
@@ -159,12 +225,13 @@ def attach_workflow(
     Args:
         run: Run request (payload of the inbound request), changed in place.
         files: Fetched files.
-        workflow_url: Filename of the main file, one of `files`.
+        main_file: Filename of the main file, one of `files`.
 
     Raises:
         Rejected: A file has the name of another (also after NFKC
             normalization and ignoring case), e.g., of one that the client
-            attached (`409`).
+            attached, or is a directory of another, or in another, as FOCA
+            checks them (cf. `foca.plugins.wes.check_attachments`) (`409`).
     """
     attachments = list(run.get(ATTACHMENT_FIELD) or [])
     names = {file_key(attachment.filename) for attachment in attachments}
@@ -177,5 +244,10 @@ def attach_workflow(
             )
         names.add(key)
         attachments.append(file)
+    try:
+        # names only: the gateway checks its limits after the hook
+        check_attachments(attachments, _NO_LIMITS)
+    except InvalidRunRequest as exc:
+        raise Rejected(f"fetched files conflict with others: {exc}", 409) from None
     run[ATTACHMENT_FIELD] = attachments
-    run["workflow_url"] = workflow_url
+    run[WORKFLOW_URL] = main_file

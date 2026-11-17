@@ -69,11 +69,14 @@ an attached workflow or another `https` URL. It rejects the run:
 | --- | --- |
 | `400` | The `trs://` URI or TRS URL is malformed (e.g., user info, a query or fragment, a tool or version identifier `.` or `..`), or `workflow_type` has no TRS descriptor type. |
 | `403` | The TRS host isn't in `allowed_hosts` (by default, every host). |
-| `409` | A fetched file has the name of a file that the client attached (also after NFKC normalization and ignoring case). |
-| `413` | The tool version has more than `max_files` descriptors, or they are larger than `max_size` in total, or a response is larger than the gateway's `plugins.defaults.http.max_response_size`. |
-| `422` | The TRS has no such tool version with that descriptor type, or lacks a listed descriptor (`404`); there is no single primary descriptor; a path is unsafe (e.g., with `..`) or listed twice; a descriptor has no inline `content` (the plugin doesn't follow `url`s) or no valid text. |
+| `409` | A fetched file has the name of a file that the client attached (also after NFKC normalization and ignoring case), or is a directory of another file, or inside one (e.g., the client attached `tools` and the TRS lists `tools/step.cwl`). |
+| `413` | The tool version has more than `max_files` descriptors, or they are larger than `max_size` in total (responses that can't fit are refused before they are parsed). |
+| `422` | The TRS has no such tool version with that descriptor type, or lacks a listed descriptor (`404`); there is no single primary descriptor; a path is unsafe (e.g., with `..`) or listed twice; a descriptor has no inline `content` (the plugin doesn't follow `url`s) or no valid text; the file listing is larger than 1 MiB, or a response larger than the gateway's `plugins.defaults.http.max_response_size`. |
 
-Other responses of the TRS (e.g., `5xx`, `401`, redirects, invalid JSON)
+Responses are checked for size before they are parsed, so that a TRS
+can't make the gateway parse more than about 1 MiB of listing or
+`max_size` of descriptors (as JSON). Other responses of the TRS (e.g.,
+`5xx`, `401`, redirects, invalid JSON)
 fail the call (`TrsError`), as do errors of the HTTP client (e.g., refused
 addresses, timeouts): the step's `on_failure` applies.
 
@@ -105,9 +108,9 @@ plugins:
 
 | Setting | Type | Default | Description |
 | --- | --- | --- | --- |
-| `allowed_hosts` | list of strings | `[]` | Hosts of the TRSs that workflows may come from, as host names, optionally with a port (e.g., `trs.example.org:8443`; `:443` is the default), compared ignoring case. Exact matches only: no wildcards, no subdomains. Empty, every TRS URI is rejected. At most 256. |
-| `max_files` | integer | `100` | Maximum number of descriptor files of a workflow (1 to 10000). |
-| `max_size` | integer | `10485760` | Maximum total size of the descriptor files of a workflow, in bytes. Keep it, with the files that clients attach, within the gateway's `plugins.attachments.max_size`, which the engine checks after the hook. |
+| `allowed_hosts` | list of strings | `[]` | Hosts of the TRSs that workflows may come from, as host names, optionally with a port (e.g., `trs.example.org:8443`; `:443` is the default), compared ignoring case; IPv4 addresses work too, IPv6 addresses don't. Exact matches only: no wildcards, no subdomains. Empty, every TRS URI is rejected. At most 256. |
+| `max_files` | integer | `100` | Maximum number of descriptor files of a workflow (1 to 10000). Keep it, with the files that clients attach, within the gateway's `plugins.attachments.max_count`. |
+| `max_size` | integer | `10485760` | Maximum total size of the descriptor files of a workflow, in bytes. Keep it, with the files that clients attach, within the gateway's `plugins.attachments.max_size`, which the engine checks after the hook (output beyond it fails the call). |
 
 The plugin has no parameters (`params`).
 
@@ -129,6 +132,8 @@ The plugin needs the WES run requests of FOCA's plugin API
 no FOCA release yet. Until then, the repository's development environment
 installs FOCA from `dev` (`[tool.uv.sources]` in the root
 `pyproject.toml`), and CI tests the plugin with FOCA's `dev` branch only.
+Meanwhile, the dependency audit (pip-audit) skips FOCA, as it can't audit
+Git sources.
 The plugin can't be released before FOCA releases these features; its lower
 bound will then become that release.
 

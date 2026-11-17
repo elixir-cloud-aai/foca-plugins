@@ -20,12 +20,14 @@ repository root as `python -m scripts.packages <command>`:
   mypy for the given packages (directories), or for all packages, the
   scripts, their tests and the docs hooks, with the plugins' `src/`
   directories on the search path.
-- `foca PATH OLDEST` (`ci.yml`, job `test`): whether a plugin supports the
-  installed FOCA version, and the oldest FOCA version that CI tests, by
-  the `foca` requirement of its dependencies, as GitHub Actions step
-  outputs (`supported=true|false`, `oldest=true|false`), so that CI skips
-  the FOCA versions that a plugin doesn't support (e.g., a plugin that
-  needs FOCA's `dev` branch until FOCA releases a feature).
+- `foca PATH OLDEST [--dev]` (`ci.yml`, job `test`): whether a plugin
+  supports the installed FOCA version, and the oldest FOCA version that CI
+  tests, by the `foca` requirement of its dependencies, as GitHub Actions
+  step outputs (`supported=true|false`, `oldest=true|false`), so that CI
+  skips the FOCA releases that a plugin doesn't support (e.g., a plugin
+  that needs FOCA's `dev` branch until FOCA releases a feature). With
+  `--dev` (FOCA's `dev` branch installed), every plugin is supported, so
+  that each plugin runs at least one entry and changes of FOCA show.
 """
 
 import argparse
@@ -362,6 +364,7 @@ def main(argv: Sequence[str] | None = None, root: Path = ROOT) -> int:
     foca = commands.add_parser("foca", help="check FOCA support (step outputs)")
     foca.add_argument("path", help="package directory")
     foca.add_argument("oldest", help="oldest FOCA version that CI tests")
+    foca.add_argument("--dev", action="store_true", help="FOCA's dev branch")
     args = parser.parse_args(argv)
     if args.command == "mypy":
         return mypy(args.paths, root)
@@ -369,7 +372,7 @@ def main(argv: Sequence[str] | None = None, root: Path = ROOT) -> int:
         installed, oldest = supports_foca(
             args.path, [version("foca"), args.oldest], root
         )
-        print(f"supported={str(installed).lower()}")
+        print(f"supported={str(installed or args.dev).lower()}")
         print(f"oldest={str(oldest).lower()}")
         return 0
     packages = discover(root)

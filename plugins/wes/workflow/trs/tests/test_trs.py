@@ -388,11 +388,40 @@ def test_fetch_limits_total_size(http: FakeHttp) -> None:
 
 
 def test_fetch_limits_response_size() -> None:
-    """Responses beyond the client's limit are rejected with `413`."""
+    """Responses beyond the client's limit are rejected with `422`.
+
+    The TRS's response is too large, not the client's request.
+    """
     http = FakeHttp(max_response_size=64)
     serve(http, [TrsFile("main.cwl", "PRIMARY_DESCRIPTOR", "x" * 100)])
     with pytest.raises(Rejected, match="TRS response is too large") as info:
         fetch(http)
+    assert info.value.status == 422
+
+
+def test_fetch_limits_listing_size(http: FakeHttp) -> None:
+    """Listings larger than `MAX_LISTING_SIZE` are rejected before parsing.
+
+    Args:
+        http: Fake HTTP client.
+    """
+    http.add("GET", f"{TOOL_URL}/CWL/files", content=b"[" + b"{}," * 2**19 + b"{}]")
+    with pytest.raises(Rejected, match="TRS lists too many files") as info:
+        fetch(http)
+    assert info.value.status == 422
+
+
+def test_fetch_limits_descriptor_size_before_parsing(http: FakeHttp) -> None:
+    """Descriptor responses that can't fit the size limit aren't parsed.
+
+    Args:
+        http: Fake HTTP client.
+    """
+    serve(http, [TrsFile("main.cwl", "PRIMARY_DESCRIPTOR", None)])
+    body = b'{"content": "' + b"x" * (6 * 10 + 64 * 1024) + b'", "x": ['
+    http.add("GET", descriptor_url("main.cwl"), content=body)
+    with pytest.raises(Rejected, match="larger than 10 bytes") as info:
+        fetch(http, max_size=10)
     assert info.value.status == 413
 
 
@@ -632,6 +661,32 @@ def test_on_request_rejects_conflicting_attachments(
     with pytest.raises(Rejected) as info:
         plugin.on_request(request, make_context(http))
     assert info.value.status == 409
+
+
+@pytest.mark.parametrize(
+    ("attached", "fetched"),
+    [
+        ("tools", [TrsFile("main.cwl", "PRIMARY_DESCRIPTOR", MAIN_CWL)]),
+        ("main.cwl/x", [TrsFile("main.cwl", "PRIMARY_DESCRIPTOR", MAIN_CWL)]),
+    ],
+)
+def test_on_request_rejects_directory_conflicts(
+    plugin: Trs, http: FakeHttp, attached: str, fetched: list[TrsFile]
+) -> None:
+    """Fetched files can't be in a file, or be a directory, of another (`409`).
+
+    Args:
+        plugin: Plugin.
+        http: Fake HTTP client.
+        attached: Filename of the client's file.
+        fetched: Files of the tool version.
+    """
+    serve(http, [*fetched, TrsFile("tools/step.cwl")])
+    request = make_run(attachments=[Attachment(attached, b"x")])
+    with pytest.raises(Rejected, match="conflict with others") as info:
+        plugin.on_request(request, make_context(http))
+    assert info.value.status == 409
+    assert request.payload["workflow_url"] == TRS_URI
 
 
 def test_on_request_needs_http_client(plugin: Trs) -> None:

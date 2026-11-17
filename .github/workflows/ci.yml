@@ -150,10 +150,11 @@ jobs:
   # marked `coverage`; all gate, as in FOCA. FOCA: the lowest supported
   # version (0.19.0, the first with the plugin store), the other releases
   # up to the newest (0.20.0, 0.21.0, 0.22.0) and FOCA's `dev` branch, so
-  # that changes of the plugin API show before FOCA releases them (raise the lowest version with the plugins'
-  # lower bounds, and the newest with their upper bounds; the oldest also
-  # in the step `Check FOCA version`). Entries with a FOCA version that a
-  # plugin's `foca` requirement excludes skip the checks
+  # that changes of the plugin API show before FOCA releases them (raise
+  # the lowest version with the plugins' lower bounds, also in the step
+  # `Check FOCA version`, and the newest with their upper bounds). Entries
+  # with a FOCA version that a plugin's `foca` requirement excludes skip the
+  # checks
   test:
     name: Test (${{ matrix.package.name }}, Python ${{ matrix.python-version }}, FOCA ${{ matrix.foca }})
     needs: changes
@@ -208,13 +209,16 @@ jobs:
           uv pip install --reinstall-package foca "${FOCA_SPEC}"
           echo "${PWD}/.venv/bin" >> "$GITHUB_PATH"
       # Whether the plugin's `foca` requirement allows the installed FOCA
-      # version (the further steps run only then, so that, e.g., a plugin
-      # that needs FOCA's `dev` branch skips the releases), and the oldest
-      # version of the matrix (if not, the `dev` entry reports coverage)
+      # release (the further steps run only then, so that, e.g., a plugin
+      # that needs FOCA's `dev` branch skips the releases; the `dev` entry
+      # always runs, so that no plugin skips all), and the oldest version
+      # of the matrix (if not, the `dev` entry reports coverage)
       - name: Check FOCA version
         id: foca
+        env:
+          DEV: ${{ matrix.foca == 'dev' && '--dev' || '' }}
         run: |
-          python -m scripts.packages foca "${PACKAGE}" 0.19.0 | tee -a "$GITHUB_OUTPUT"
+          python -m scripts.packages foca "${PACKAGE}" 0.19.0 ${DEV:+"${DEV}"} | tee -a "$GITHUB_OUTPUT"
       - name: Lint
         if: ${{ steps.foca.outputs.supported == 'true' }}
         run: |

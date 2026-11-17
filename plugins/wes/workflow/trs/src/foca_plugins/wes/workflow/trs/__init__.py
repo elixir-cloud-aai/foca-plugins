@@ -17,25 +17,16 @@ The plugin API is documented in FOCA's `docs/plugins.md`
 (https://foca.readthedocs.io/en/latest/plugins/).
 """
 
-from typing import Annotated, Any
-from urllib.parse import urlsplit
-
 from foca.plugins import Context, InboundRequest, NotApplicable, Plugin, Rejected
 from foca.plugins.base import EmptyModel
-from pydantic import (
-    AfterValidator,
-    BaseModel,
-    BeforeValidator,
-    ConfigDict,
-    Field,
-    StringConstraints,
-)
+from pydantic import BaseModel, ConfigDict, Field
 
 from foca_plugins.wes.workflow.trs.attach import (
+    WORKFLOW_URL,
     FileLimits,
+    Host,
     attach_workflow,
     check_host,
-    host_key,
 )
 from foca_plugins.wes.workflow.trs.trs import (
     DESCRIPTOR_TYPES,
@@ -48,56 +39,15 @@ from foca_plugins.wes.workflow.trs.trs import (
 
 __all__ = ["Trs", "TrsConfig", "TrsError"]
 
-# Host names (letters, digits, hyphens, dots), optionally with a port
-_HOST = r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:[0-9]{1,5})?"
-
-
-def _lowercase(value: Any) -> Any:
-    """Turn a host name into lowercase, as hosts of URLs are compared.
-
-    Args:
-        value: Host name, or another value (left to the validation).
-
-    Returns:
-        The value, in lowercase if it is a string.
-    """
-    return value.lower() if isinstance(value, str) else value
-
-
-def _normalize(value: str) -> str:
-    """Normalize an allowed host as hosts of URLs are (cf. `host_key()`).
-
-    Args:
-        value: Host name, optionally with a port.
-
-    Returns:
-        The host, without the port 443 of `https`.
-
-    Raises:
-        ValueError: The port is out of range.
-    """
-    try:
-        return host_key(urlsplit(f"https://{value}"))
-    except ValueError:
-        raise ValueError("invalid port") from None
-
-
-Host = Annotated[
-    str,
-    BeforeValidator(_lowercase),
-    StringConstraints(pattern=rf"^{_HOST}$", max_length=259),
-    AfterValidator(_normalize),
-]
-
 
 class TrsConfig(BaseModel):
     """Admin settings (`plugins.available."wes.workflow.trs".config`).
 
     Attributes:
         allowed_hosts: Hosts of the TRSs that workflows may come from, e.g.,
-            `trs.example.org`, or with a port, `trs.example.org:8443`;
-            none by default, so that the plugin rejects every TRS URI until
-            the admin allows hosts.
+            `trs.example.org`, or with a port, `trs.example.org:8443`
+            (no IPv6 addresses); none by default, so that the plugin
+            rejects every TRS URI until the admin allows hosts.
         max_files: Maximum number of descriptor files of a workflow.
         max_size: Maximum total size of the descriptor files of a workflow,
             in bytes (keep it, with the files that clients attach, within
@@ -174,16 +124,16 @@ class Trs(Plugin[TrsConfig, EmptyModel]):
             foca.utils.http.HttpError: A request failed (e.g., timeout).
         """
         run = request.payload
-        url = run.get("workflow_url") if isinstance(run, dict) else None
+        url = run.get(WORKFLOW_URL) if isinstance(run, dict) else None
         if not isinstance(url, str):
             raise NotApplicable("no workflow_url")
         try:
             tool = parse_tool_version(url)
         except InvalidTrsUri as exc:
-            raise Rejected(f"workflow_url: {exc}", 400) from None
+            raise Rejected(f"{WORKFLOW_URL}: {exc}", 400) from None
         if tool is None:
             raise NotApplicable("workflow_url is no TRS URI")
-        check_host(tool.host, self.allowed_hosts, "workflow_url")
+        check_host(tool.host, self.allowed_hosts, WORKFLOW_URL)
         type_ = descriptor_type(run.get("workflow_type"))
         if type_ is None:
             types = ", ".join(sorted(set(DESCRIPTOR_TYPES.values())))

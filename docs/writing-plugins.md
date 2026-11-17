@@ -147,8 +147,9 @@ development environment has the newest FOCA release (`uv.lock`), or FOCA's
 `dev` branch while a plugin needs features that FOCA hasn't released yet
 (`[tool.uv.sources]` in the root `pyproject.toml`, locked to a commit).
 
-CI skips the checks of the FOCA versions that a plugin's `foca` requirement
-excludes (`python -m scripts.packages foca`, step "Check FOCA version"):
+CI skips the checks of the FOCA releases that a plugin's `foca`
+requirement excludes (`python -m scripts.packages foca`, step "Check FOCA
+version"); every plugin is tested with FOCA's `dev` branch:
 a plugin that needs an unreleased feature of FOCA requires
 `foca>=<next patch version>.dev0` (e.g., `foca>=0.22.1.dev0,<0.24`, as
 `wes.workflow.trs` does), so that CI tests it with FOCA's `dev` branch

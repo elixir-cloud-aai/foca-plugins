@@ -245,3 +245,6 @@ def test_main_foca(
     monkeypatch.setattr(packages, "version", lambda _: "0.22.0")
     assert packages.main(["foca", NOOP.path, "0.22.1"], repo) == 0
     assert capsys.readouterr().out == "supported=false\noldest=true\n"
+    monkeypatch.setattr(packages, "version", lambda _: "0.24.1.dev2")
+    assert packages.main(["foca", NOOP.path, "0.19.0", "--dev"], repo) == 0
+    assert capsys.readouterr().out == "supported=true\noldest=false\n"

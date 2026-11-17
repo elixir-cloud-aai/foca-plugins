@@ -15,6 +15,7 @@ from foca.plugins import Attachment, Rejected
 from foca.utils.http import GuardedClient, ResponseTooLarge
 
 from foca_plugins.wes.workflow.trs.attach import (
+    WORKFLOW_URL,
     FileLimits,
     file_key,
     host_key,
@@ -41,7 +42,18 @@ SECONDARY = "SECONDARY_DESCRIPTOR"
 MEDIA_TYPE = "text/plain"
 """Media type of the attached descriptor files."""
 
-FIELD = "workflow_url"
+FIELD = WORKFLOW_URL
+
+MAX_LISTING_SIZE = 1024 * 1024
+"""Maximum size of the file listings of tool versions, in bytes (parsed
+JSON takes many times more memory)."""
+
+JSON_OVERHEAD = 6
+"""Factor of the size of JSON strings to that of their text, at most (as
+`\\uXXXX` escapes)."""
+
+WRAPPER_OVERHEAD = 64 * 1024
+"""Size of the other fields of `FileWrapper`s (e.g., checksums), at most."""
 
 # `https://<host>[/<prefix>]/ga4gh/trs/v2/tools/<id>/versions/<version>`,
 # with the ID and the version as one (encoded) segment each
@@ -195,20 +207,26 @@ def parse_tool_version(url: str) -> ToolVersion | None:
     )
 
 
-def _get_json(http: GuardedClient, url: str, missing: str) -> Any:
+def _get_json(
+    http: GuardedClient, url: str, missing: str, max_size: int, too_large: Rejected
+) -> Any:
     """Get a JSON document from the TRS.
 
     Args:
         http: HTTP client (`ctx.http`).
         url: URL.
         missing: Message of the rejection if the TRS answers `404`.
+        max_size: Maximum size of the response body, in bytes, checked
+            before it is parsed (the client's own limit applies as well).
+        too_large: Rejection if the body is larger than `max_size`.
 
     Returns:
         Parsed JSON.
 
     Raises:
-        Rejected: The TRS answers `404` (`422`), or the response is larger
-            than the client allows (`413`).
+        Rejected: The TRS answers `404` (`422`), the response is larger than
+            the client allows (`422`), or larger than `max_size`
+            (`too_large`).
         TrsError: The TRS answers with another status than `200` or `404`,
             or with invalid JSON.
         foca.utils.http.HttpError: The request failed.
@@ -216,11 +234,13 @@ def _get_json(http: GuardedClient, url: str, missing: str) -> Any:
     try:
         response = http.get(url, headers={"Accept": "application/json"})
     except ResponseTooLarge:
-        raise Rejected(f"{FIELD}: a TRS response is too large", 413) from None
+        raise Rejected(f"{FIELD}: a TRS response is too large", 422) from None
     if response.status == 404:
         raise Rejected(f"{FIELD}: {missing}", 422)
     if response.status != 200:
         raise TrsError(f"TRS answered {response.status}")
+    if len(response.content) > max_size:
+        raise too_large
     try:
         return response.json()
     except ValueError:
@@ -286,15 +306,19 @@ def fetch_descriptors(
 
     Raises:
         Rejected: The TRS has no such tool version or descriptor type, or
-            not one of its files, a file has no content or an unsafe path
-            (`422`), two have the same path (`422`), or the files exceed
-            the limits (`413`).
+            not one of its files, a file has no content or an unsafe path,
+            two have the same path, or a response is too large (`422`), or
+            the files exceed the limits (`413`).
         TrsError: The TRS answered unexpectedly.
         foca.utils.http.HttpError: A request failed.
     """
     base = f"{tool.url}/{quote(type_, safe='')}"
     listing = _get_json(
-        http, f"{base}/files", f"TRS has no such tool version with type {type_}"
+        http,
+        f"{base}/files",
+        f"TRS has no such tool version with type {type_}",
+        MAX_LISTING_SIZE,
+        Rejected(f"{FIELD}: TRS lists too many files", 422),
     )
     paths = [relative_path(path) for path in _descriptor_paths(listing)]
     if len({file_key(path) for path in paths}) != len(paths):
@@ -306,6 +330,8 @@ def fetch_descriptors(
             http,
             f"{base}/descriptor/{quote(path, safe='')}",
             "TRS lacks a descriptor that it lists",
+            (limits.max_size - limits.size) * JSON_OVERHEAD + WRAPPER_OVERHEAD,
+            limits.too_large(),
         )
         content = wrapper.get("content") if isinstance(wrapper, dict) else None
         if not isinstance(content, str):
