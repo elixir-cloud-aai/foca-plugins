@@ -38,4 +38,4 @@ task, and ships its decryption image, scanned, signed and attested, as
 - Add an end-to-end test (`e2e/check.sh`, CI job `e2e`): proTES with the
   plugin sends tasks with Crypt4GH inputs, served over HTTP, to Funnel, a
   real TES backend; it checks the decrypted content, the teardown, a
-  failing decryption and `teardown_on_error` (#68).
+  failing decryption and `teardown_on_error` (#68, #76).
