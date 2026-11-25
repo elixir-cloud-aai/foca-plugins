@@ -7,11 +7,16 @@ Features, Security, Fixes, Documentation, Maintenance; empty ones left
 out), each entry with its issue and pull request numbers (see "Releasing"
 in the docs).
 
-## Unreleased
+## 0.2.0
+
+The plugin keeps the locations of addresses in FOCA's plugin store,
+shared by all processes and replicas, limits the uncached `dbip` lookups
+of each caller per day, and installs alongside FOCA 0.19 to 0.23; FOCA
+0.18 is no longer supported. Check the breaking changes before upgrading.
 
 ### Breaking changes
 
-- Require FOCA 0.19 (`foca>=0.19.0,<0.23`), for its plugin store (#21).
+- Require FOCA 0.19 (`foca>=0.19.0`), for its plugin store (#21).
 - With `provider: dbip`, each caller now gets at most 100 uncached
   lookups per day by default (`dbip_user_daily_lookups`; set `null` for
   the earlier behaviour), and the plugin keeps locations and lookup counts
@@ -30,6 +35,11 @@ in the docs).
   store by a hash of the caller's identity; `null` turns the limit off
   (#21).
 - Declare the plugin's entries in the plugin store (`data_stored`) (#21).
+
+### Maintenance
+
+- Support FOCA 0.23 (`foca>=0.19.0,<0.24`), tested against FOCA 0.23.0
+  (#96, #97).
 
 ## 0.1.3
 

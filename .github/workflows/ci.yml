@@ -166,7 +166,7 @@ jobs:
       matrix:
         package: ${{ fromJSON(needs.changes.outputs.packages) }}
         python-version: ["3.11", "3.13", "3.15"]
-        foca: ["0.19.0", "0.20.0", "0.21.0", "0.22.0", dev]
+        foca: ["0.19.0", "0.20.0", "0.21.0", "0.22.0", "0.23.0", dev]
         include:
           - foca: "0.19.0"
             foca-spec: "foca==0.19.0"
@@ -178,6 +178,8 @@ jobs:
             foca-spec: "foca==0.21.0"
           - foca: "0.22.0"
             foca-spec: "foca==0.22.0"
+          - foca: "0.23.0"
+            foca-spec: "foca==0.23.0"
           - foca: dev
             foca-spec: "foca @ git+https://github.com/elixir-cloud-aai/foca@dev"
     env:

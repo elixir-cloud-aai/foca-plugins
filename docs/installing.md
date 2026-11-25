@@ -11,9 +11,9 @@ dependencies (and scanner findings) out of their images.
 !!! note "Experimental plugins only"
 
     The plugins released so far, `generic.routing.random` and
-    `tes.routing.distance` (0.1.3 each) and `tes.data.crypt4gh` (0.1.0),
-    are experimental; the latest release train is `foca-plugins` 0.3.0,
-    which doesn't pin `tes.data.crypt4gh` yet (the next train will).
+    `tes.routing.distance` (0.2.0 each) and `tes.data.crypt4gh` (0.1.1),
+    are experimental; the latest release train is `foca-plugins` 0.4.0,
+    which pins all three.
     Distributions named below that don't exist yet are examples of the
     naming scheme.
 
@@ -41,7 +41,7 @@ requests of its plugin API, which they need (see their READMEs).
 For example:
 
 ```bash
-pip install "foca-plugins[tes-routing]==0.3.0"
+pip install "foca-plugins[tes-routing]==0.4.0"
 ```
 
 The example plugin `generic.example.noop` is never published, so it is in
@@ -54,7 +54,7 @@ of this repository with those of others, e.g. (the second name is an
 example):
 
 ```bash
-pip install "foca-plugin-tes-routing-distance==0.1.3" "org-example-cost-routing==<version>"
+pip install "foca-plugin-tes-routing-distance==0.2.0" "org-example-cost-routing==<version>"
 ```
 
 Each plugin declares the FOCA versions that it supports (`foca>=X,<Y`) and
