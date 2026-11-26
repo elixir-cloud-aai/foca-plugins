@@ -145,8 +145,8 @@ supports and the default one (3.11, 3.13, 3.15), and with the lowest
 supported FOCA version, 0.19.0, the first release with the plugin store
 (`ctx.store`; the lower bound of every plugin, `foca>=0.19.0`; 0.18.0, the
 first release with the plugin API, is no longer supported), the later FOCA
-releases up to the newest, 0.20.0, 0.21.0 and 0.22.0 (the upper bounds are
-`<0.23`), and FOCA's `dev` branch, from Git, so that changes of the plugin API show before FOCA releases them. The
+releases up to the newest, 0.20.0, 0.21.0, 0.22.0 and 0.23.0 (the upper
+bounds are `<0.24`), and FOCA's `dev` branch, from Git, so that changes of the plugin API show before FOCA releases them. The
 development environment has the newest FOCA release (`uv.lock`), or FOCA's
 `dev` branch while a plugin needs features that FOCA hasn't released yet
 (`[tool.uv.sources]` in the root `pyproject.toml`, locked to a commit).

@@ -6,6 +6,18 @@ changes in the sections of the release notes (Breaking changes, Features,
 Security, Fixes, Documentation, Maintenance; empty ones left out), each
 entry with its issue and pull request numbers (see "Releasing" in the docs).
 
+## 0.1.1
+
+Support for FOCA 0.23: the plugin now installs alongside FOCA 0.19 to
+0.23, with the decryption image
+`elixircloud/foca-plugin-tes-data-crypt4gh-decrypt:0.1.1`; it changes
+nothing else.
+
+### Maintenance
+
+- Support FOCA 0.23 (`foca>=0.19.0,<0.24`), tested against FOCA 0.23.0
+  (#96, #97).
+
 ## 0.1.0
 
 The first release of the plugin, the successor of proTES's Crypt4GH

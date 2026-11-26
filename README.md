@@ -40,16 +40,15 @@ repositories work the same way.
 
 <!-- --8<-- [start:status] -->
 **Status:** the plugin API is new in FOCA 0.18.0; the plugins support
-FOCA 0.19 (the first release with the plugin store) to 0.22. Plugins so
-far, all experimental and released as 0.1.x: `generic.routing.random`,
+FOCA 0.19 (the first release with the plugin store) to 0.23. Plugins so
+far, all experimental: `generic.routing.random`,
 `tes.routing.distance` and `tes.data.crypt4gh`, plus the example
 `generic.example.noop`, the template of new plugins (never published).
 `wes.workflow.trs` and `wes.workflow.git` (run WES workflows from a TRS
 or from Git repositories) and `wes.routing.workflow-type` (route WES runs
 by their workflow type) are not released yet: they need FOCA's WES run
 requests, which are on FOCA's `dev` branch only. The latest release train
-is `foca-plugins` 0.3.0 (without `tes.data.crypt4gh`, which the next train
-pins).
+is `foca-plugins` 0.4.0.
 <!-- --8<-- [end:status] -->
 
 **Read the [documentation][docs]** for installing plugins, writing them,
@@ -62,7 +61,7 @@ Install plugins into the environment of the gateway app, usually in an
 image derived from the app's image, then enable them in the app's
 configuration (FOCA's `plugins` section): installed is not enabled. Either
 a group or subgroup of a release train, as an extra of the meta
-distribution `foca-plugins` (e.g., `foca-plugins[tes]==0.3.0`), or single
+distribution `foca-plugins` (e.g., `foca-plugins[tes]==0.4.0`), or single
 plugin distributions (`foca-plugin-<group>-<subgroup>-<name>`).
 <!-- --8<-- [end:install] -->
 
